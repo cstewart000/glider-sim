@@ -346,7 +346,8 @@ const _tmpCam = new THREE.Vector3();
 function cockpitEyeFromPose(pos, quat, out) {
   _fwd.set(0, 0, -1).applyQuaternion(quat);
   _up.set(0, 1, 0).applyQuaternion(quat);
-  out.copy(pos).addScaledVector(_up, 0.55).addScaledVector(_fwd, 0.15);
+  // High over low coaming — concept long-nose view (matches pilotCam)
+  out.copy(pos).addScaledVector(_up, 0.65).addScaledVector(_fwd, 0.22);
   return out;
 }
 
@@ -404,15 +405,17 @@ function updateCamera(dt, renderPos, renderQuat) {
     _lookPitchQ.setFromAxisAngle(_right, lookPitch);
     _lookDir.applyQuaternion(_lookPitchQ);
 
-    camTarget.copy(camPos).addScaledVector(_lookDir, 50);
-    // Slight down bias only when looking mostly forward (instruments / horizon)
-    if (!lookingAway) camTarget.addScaledVector(_up, -0.3);
+    camTarget.copy(camPos).addScaledVector(_lookDir, 80);
+    // Minimal down bias — keep coaming in bottom ~25% like concept art
+    if (!lookingAway) camTarget.addScaledVector(_up, -0.08);
 
     camera.position.copy(camPos);
     camera.up.copy(_up);
     camera.lookAt(camTarget);
-    camera.near = 0.05;
-    camera.fov = lookingAway ? 78 : 72;
+    camera.near = 0.06;
+    camera.far = Math.max(camera.far || 3000, 3000);
+    // Slightly tighter FOV so long nose reads further into the frame
+    camera.fov = lookingAway ? 75 : 62;
     camera.updateProjectionMatrix();
   } else if (mode === 1) {
     gliderMesh.visible = true;

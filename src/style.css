@@ -36,12 +36,12 @@ html, body, #app {
   left: 50%;
   transform: translateX(-50%);
   bottom: 0;
-  width: min(52vw, 720px);
-  height: 38%;
+  width: min(48vw, 640px);
+  height: 22%;
   z-index: 2;
   pointer-events: none;
-  /* Soft 2D cue — 3D cockpit is the primary coaming */
-  opacity: 0.38;
+  /* Very soft 2D cue — low coaming; 3D spine is primary */
+  opacity: 0.22;
   transition: opacity 0.25s;
   overflow: visible;
 }
