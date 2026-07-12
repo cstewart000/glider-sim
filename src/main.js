@@ -198,9 +198,10 @@ function updateGliderShadow() {
     _lightDir.set(0.15, -0.98, 0.1).normalize();
   }
 
-  const px = physics.position.x;
-  const py = physics.position.y;
-  const pz = physics.position.z;
+  // Prefer render-interpolated pose when flying (smoother shadow)
+  const px = gliderMesh.visible || running ? gliderMesh.position.x : physics.position.x;
+  const py = gliderMesh.visible || running ? gliderMesh.position.y : physics.position.y;
+  const pz = gliderMesh.visible || running ? gliderMesh.position.z : physics.position.z;
   const groundY = terrainHeight(px, pz);
   const agl = Math.max(0.5, py - groundY);
 
@@ -339,21 +340,23 @@ const LOOK_PAD = {
 
 let lookYaw = 0;
 let lookPitch = 0;
+const _tmpCam = new THREE.Vector3();
 
-function cockpitEyePosition(out) {
-  _fwd.set(0, 0, -1).applyQuaternion(physics.quaternion);
-  _up.set(0, 1, 0).applyQuaternion(physics.quaternion);
-  out
-    .copy(physics.position)
-    .addScaledVector(_up, 0.55)
-    .addScaledVector(_fwd, 0.15);
+/** Cockpit eye from a pose (use render-interpolated pose to avoid jitter). */
+function cockpitEyeFromPose(pos, quat, out) {
+  _fwd.set(0, 0, -1).applyQuaternion(quat);
+  _up.set(0, 1, 0).applyQuaternion(quat);
+  out.copy(pos).addScaledVector(_up, 0.55).addScaledVector(_fwd, 0.15);
   return out;
 }
 
-function updateCamera(dt) {
-  _fwd.set(0, 0, -1).applyQuaternion(physics.quaternion);
-  _up.set(0, 1, 0).applyQuaternion(physics.quaternion);
-  _right.set(1, 0, 0).applyQuaternion(physics.quaternion);
+function updateCamera(dt, renderPos, renderQuat) {
+  const pos = renderPos || physics.position;
+  const quat = renderQuat || physics.quaternion;
+
+  _fwd.set(0, 0, -1).applyQuaternion(quat);
+  _up.set(0, 1, 0).applyQuaternion(quat);
+  _right.set(1, 0, 0).applyQuaternion(quat);
 
   // —— WebXR: rig follows glider; headset provides look ——
   if (isXRPresenting()) {
@@ -362,8 +365,8 @@ function updateCamera(dt) {
     // Show external airframe only on roll-out / cartwheel; hide in flight (inside cockpit)
     const external = physics.rolling || physics.wingStrike || cameraMode !== 0;
     gliderMesh.visible = external;
-    cockpitEyePosition(camPos);
-    updateXRRig(camPos, physics.quaternion);
+    cockpitEyeFromPose(pos, quat, camPos);
+    updateXRRig(camPos, quat);
     return;
   }
 
@@ -385,14 +388,14 @@ function updateCamera(dt) {
     setCockpitOverlayVisible(!lookingAway);
     gliderMesh.visible = false;
 
-    // Eye point in cockpit
-    cockpitEyePosition(camPos);
+    // Eye point in cockpit (interpolated pose)
+    cockpitEyeFromPose(pos, quat, camPos);
 
     // Look vector: yaw about body up, then pitch about (yawed) right
     _lookDir.copy(_fwd);
     _lookYawQ.setFromAxisAngle(_up, lookYaw);
     _lookDir.applyQuaternion(_lookYawQ);
-    _right.set(1, 0, 0).applyQuaternion(physics.quaternion).applyQuaternion(_lookYawQ);
+    _right.set(1, 0, 0).applyQuaternion(quat).applyQuaternion(_lookYawQ);
     _lookPitchQ.setFromAxisAngle(_right, lookPitch);
     _lookDir.applyQuaternion(_lookPitchQ);
 
@@ -412,12 +415,18 @@ function updateCamera(dt) {
     setCockpitOverlayVisible(false);
     const back = rolling ? -14 : -10;
     const up = rolling ? 4.5 : 2.8;
-    const desired = physics.position.clone()
+    // Frame-rate independent chase lag (slightly stickier at low FPS for smoothness)
+    const chaseLag = 1 - Math.exp(-(rolling ? 4 : 6) * dt);
+    const desired = _tmpCam
+      .copy(pos)
       .addScaledVector(_fwd, back)
       .addScaledVector(_up, up)
       .add(new THREE.Vector3(0, rolling ? 2.5 : 1.2, 0));
-    camPos.lerp(desired, 1 - Math.exp(-(rolling ? 3 : 5) * dt));
-    camTarget.copy(physics.position).addScaledVector(_fwd, rolling ? 16 : 10).addScaledVector(_up, 0.3);
+    camPos.lerp(desired, chaseLag);
+    camTarget
+      .copy(pos)
+      .addScaledVector(_fwd, rolling ? 16 : 10)
+      .addScaledVector(_up, 0.3);
     camera.position.copy(camPos);
     camera.up.set(0, 1, 0);
     camera.lookAt(camTarget);
@@ -427,11 +436,12 @@ function updateCamera(dt) {
     gliderMesh.visible = true;
     setCockpitVisible(gliderMesh, false);
     setCockpitOverlayVisible(false);
-    const desired = physics.position.clone()
+    const desired = _tmpCam
+      .copy(pos)
       .addScaledVector(_fwd, -26)
       .add(new THREE.Vector3(0, 14, 0));
-    camPos.lerp(desired, 1 - Math.exp(-2.5 * dt));
-    camTarget.copy(physics.position);
+    camPos.lerp(desired, 1 - Math.exp(-3 * dt));
+    camTarget.copy(pos);
     camera.position.copy(camPos);
     camera.up.set(0, 1, 0);
     camera.lookAt(camTarget);
@@ -461,6 +471,12 @@ async function startFlight() {
   setScenarioVisualMode(sc.id);
   gliderMesh.position.copy(physics.position);
   gliderMesh.quaternion.copy(physics.quaternion);
+  _renderPos.copy(physics.position);
+  _renderQuat.copy(physics.quaternion);
+  _physPrevPos.copy(physics.position);
+  _physPrevQuat.copy(physics.quaternion);
+  _hasPhysPrev = false;
+  accumulator = 0;
   cameraMode = 0;
   resetLook();
   lookYaw = 0;
@@ -554,9 +570,18 @@ window.addEventListener('resize', () => {
 const clock = new THREE.Clock();
 let accumulator = 0;
 const FIXED_DT = 1 / 60;
+const MAX_PHYS_STEPS = 5;
+
+// Fixed-step render interpolation (kills mesh/camera jitter at ~30 FPS)
+const _physPrevPos = new THREE.Vector3();
+const _physPrevQuat = new THREE.Quaternion();
+const _renderPos = new THREE.Vector3();
+const _renderQuat = new THREE.Quaternion();
+let _hasPhysPrev = false;
 
 function tick(_time, frame) {
-  const frameDt = Math.min(clock.getDelta(), 0.05);
+  // Cap spike frames; keep enough for 20–30 FPS catch-up without spiral-of-death
+  const frameDt = Math.min(clock.getDelta(), 0.08);
 
   updateInput();
   // XR sticks/buttons override axes when deflected (after keyboard)
@@ -584,7 +609,12 @@ function tick(_time, frame) {
   if (running) {
     accumulator += frameDt;
     let steps = 0;
-    while (accumulator >= FIXED_DT && steps < 4) {
+    while (accumulator >= FIXED_DT && steps < MAX_PHYS_STEPS) {
+      // Snapshot before this step — used to interpolate the last incomplete interval
+      _physPrevPos.copy(physics.position);
+      _physPrevQuat.copy(physics.quaternion);
+      _hasPhysPrev = true;
+
       physics.update(
         FIXED_DT,
         controls,
@@ -597,10 +627,25 @@ function tick(_time, frame) {
       accumulator -= FIXED_DT;
       steps++;
     }
-    if (accumulator > FIXED_DT) accumulator = 0;
+    // Spiral-of-death: drop backlog but keep a fractional remainder for smooth lerp
+    if (steps >= MAX_PHYS_STEPS && accumulator > FIXED_DT) {
+      accumulator = accumulator % FIXED_DT;
+    }
 
-    gliderMesh.position.copy(physics.position);
-    gliderMesh.quaternion.copy(physics.quaternion);
+    // Blend between last completed physics state and current (alpha = leftover time)
+    const alpha = _hasPhysPrev
+      ? Math.min(1, Math.max(0, accumulator / FIXED_DT))
+      : 1;
+    if (_hasPhysPrev && steps > 0) {
+      _renderPos.lerpVectors(_physPrevPos, physics.position, alpha);
+      _renderQuat.copy(_physPrevQuat).slerp(physics.quaternion, alpha);
+    } else {
+      _renderPos.copy(physics.position);
+      _renderQuat.copy(physics.quaternion);
+    }
+
+    gliderMesh.position.copy(_renderPos);
+    gliderMesh.quaternion.copy(_renderQuat);
     updateControlSurfaces(gliderMesh, controls, frameDt);
     if (!isXRPresenting()) updateCockpitOverlay(controls, frameDt);
     if (physics.rolling) {
@@ -645,17 +690,21 @@ function tick(_time, frame) {
   thermals.update(frameDt);
 
   // Stream terrain well ahead — prioritize flight direction for horizon fill
-  const followPos = running || ended ? physics.position : camera.position;
-  _fwd.set(0, 0, -1).applyQuaternion(physics.quaternion);
+  const followPos = running || ended ? _renderPos : camera.position;
+  if (running || ended) {
+    _fwd.set(0, 0, -1).applyQuaternion(_renderQuat);
+  } else {
+    _fwd.set(0, 0, -1).applyQuaternion(physics.quaternion);
+  }
   terrain.world.update(followPos, false, running ? _fwd : null);
 
   // Clouds follow pilot for motion parallax
   clouds.update(frameDt, followPos, running ? _fwd : null);
 
-  // Ridge water vapour — blows onshore, follows terrain face
-  ridgeVapor.update(frameDt, followPos);
+  // Ridge vapour — throttle particle integrate when FPS is low (visual only)
+  ridgeVapor.update(frameDt, followPos, frameDt > 0.028);
 
-  updateCamera(frameDt);
+  updateCamera(frameDt, running || ended ? _renderPos : null, running || ended ? _renderQuat : null);
   updateSun(camera);
   updateGliderShadow();
 

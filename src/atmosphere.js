@@ -56,9 +56,9 @@ function ambientWind(x, y, z, profile, out) {
   const agl = Math.max(0, y - ground);
   // Shear: ~0.55 at surface, 1.0 by 300 m AGL
   const shear = 0.55 + 0.45 * Math.min(1, agl / 300);
-  // Light gust (smooth)
+  // Very slow gust (avoid high-frequency force noise → visual jitter)
   const t = performance.now() * 0.001;
-  const gust = 0.15 * Math.sin(t * 0.7 + x * 0.01) + 0.1 * Math.sin(t * 1.3 + z * 0.008);
+  const gust = 0.12 * Math.sin(t * 0.35 + x * 0.008) + 0.08 * Math.sin(t * 0.55 + z * 0.006);
   return out.set(base.x * shear, 0, base.z * shear + gust);
 }
 
@@ -104,7 +104,8 @@ function ridgeWind(x, y, z, out) {
     const lee = Math.exp(-(faceDist * faceDist) / ((run * 0.4) ** 2));
     w = -U * 0.35 * lee * heightBand;
     vHoriz = -U * 0.25 * lee;
-    vHoriz += Math.sin(x * 0.08 + performance.now() * 0.002) * lee * 1.2;
+    // Slow rotor swirl only (not frame-rate chatter)
+    vHoriz += Math.sin(x * 0.06 + performance.now() * 0.0007) * lee * 0.9;
   }
 
   return out.set(0, w, vHoriz);

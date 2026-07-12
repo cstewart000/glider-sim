@@ -12,6 +12,8 @@ import {
 } from './terrain.js';
 
 const COUNT = 640;
+/** When FPS is low, integrate every Nth particle per frame (all still drawn). */
+const LOW_FPS_STRIDE = 2;
 
 function mulberry32(a) {
   return function () {
@@ -184,16 +186,21 @@ export class RidgeVaporSystem {
   /**
    * @param {number} dt
    * @param {THREE.Vector3} followPos
+   * @param {boolean} [lowFps] stagger particle integrate to protect frame time
    */
-  update(dt, followPos) {
+  update(dt, followPos, lowFps = false) {
     if (!this.group.visible || getTerrainProfile() !== 'coastal') return;
     if (followPos) this._follow.copy(followPos);
     this._time += dt;
-    const t = Math.min(0.05, dt);
+    // Slightly larger substep when staggered so motion stays continuous
+    const t = Math.min(0.06, lowFps ? dt * LOW_FPS_STRIDE : dt);
+    this._partCursor = (this._partCursor || 0) % LOW_FPS_STRIDE;
 
-    for (const p of this._particles) {
-      this._stepParticle(p, t);
+    for (let i = 0; i < COUNT; i++) {
+      if (lowFps && i % LOW_FPS_STRIDE !== this._partCursor) continue;
+      this._stepParticle(this._particles[i], t);
     }
+    if (lowFps) this._partCursor++;
     this._writeBuffers();
   }
 
