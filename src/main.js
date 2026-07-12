@@ -360,11 +360,16 @@ function updateCamera(dt, renderPos, renderQuat) {
 
   // —— WebXR: rig follows glider; headset provides look ——
   if (isXRPresenting()) {
-    setCockpitVisible(gliderMesh, true);
     setCockpitOverlayVisible(false);
-    // Show external airframe only on roll-out / cartwheel; hide in flight (inside cockpit)
     const external = physics.rolling || physics.wingStrike || cameraMode !== 0;
-    gliderMesh.visible = external;
+    if (external) {
+      setCockpitVisible(gliderMesh, false);
+      gliderMesh.visible = true;
+    } else {
+      // 3D cockpit tub in VR FP
+      setCockpitVisible(gliderMesh, true);
+      gliderMesh.visible = true;
+    }
     cockpitEyeFromPose(pos, quat, camPos);
     updateXRRig(camPos, quat);
     return;
@@ -382,11 +387,11 @@ function updateCamera(dt, renderPos, renderQuat) {
   const mode = rolling ? 1 : cameraMode;
 
   if (mode === 0) {
-    // First-person cockpit; look pad aims head left/right/up/down
+    // First-person: 3D cockpit tub + optional faint 2D overlay for levers cue
     setCockpitVisible(gliderMesh, true);
-    // Hide 2D coaming when looking out the side / up / down
-    setCockpitOverlayVisible(!lookingAway);
-    gliderMesh.visible = false;
+    gliderMesh.visible = true;
+    // Soft 2D coaming only when looking mostly forward (not VR)
+    setCockpitOverlayVisible(!lookingAway && !isXRPresenting());
 
     // Eye point in cockpit (interpolated pose)
     cockpitEyeFromPose(pos, quat, camPos);
@@ -406,8 +411,8 @@ function updateCamera(dt, renderPos, renderQuat) {
     camera.position.copy(camPos);
     camera.up.copy(_up);
     camera.lookAt(camTarget);
-    camera.near = 0.1;
-    camera.fov = lookingAway ? 75 : 70;
+    camera.near = 0.05;
+    camera.fov = lookingAway ? 78 : 72;
     camera.updateProjectionMatrix();
   } else if (mode === 1) {
     gliderMesh.visible = true;

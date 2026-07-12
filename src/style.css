@@ -40,7 +40,8 @@ html, body, #app {
   height: 38%;
   z-index: 2;
   pointer-events: none;
-  opacity: 1;
+  /* Soft 2D cue — 3D cockpit is the primary coaming */
+  opacity: 0.38;
   transition: opacity 0.25s;
   overflow: visible;
 }
