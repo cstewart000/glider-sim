@@ -76,7 +76,41 @@ export const scenarioRuntime = {
   landTouchSpd: 0,
   landTouchZ: 0,
   landTouchX: 0,
+  /** 'base' | 'final' | 'over' approach phase for HUD */
+  landPhase: 'final',
+  // —— Cross country task ——
+  xcActive: false,
+  /** Index into XC_WAYPOINTS */
+  xcWp: 0,
+  /** Distance to current turnpoint (m) */
+  xcDist: 0,
+  /** Bearing to TP deg (0 = north / −Z) */
+  xcBearing: 0,
+  /** Legs completed */
+  xcLegs: 0,
+  xcDone: false,
+  /** Cumulative horizontal distance flown this task (m) */
+  xcTrack: 0,
+  /** Best altitude this flight (m AGL approx via y) */
+  xcMaxAlt: 0,
+  /** Last position for track integration */
+  xcLastX: 0,
+  xcLastZ: 0,
+  /** @type {null | { total: number, grade: string, debrief: string[], detail: object }} */
+  xcScore: null,
+  xcScored: false,
 };
+
+/**
+ * FAI-style triangle turnpoints (airfield world).
+ * Cylinders ~150 m; home is the runway.
+ * Thermals cluster near these spots so the task is soarable.
+ */
+export const XC_WAYPOINTS = [
+  { id: 'tp1', name: 'TP1 · Quarry', x: 420, z: -520, r: 150 },
+  { id: 'tp2', name: 'TP2 · Ridge Line', x: -480, z: -380, r: 150 },
+  { id: 'home', name: 'HOME · Field', x: RUNWAY.x, z: RUNWAY.z, r: 180 },
+];
 
 /** Approach threshold (near +Z end); landings fly toward −Z. */
 export function runwayThresholdZ() {
@@ -105,14 +139,21 @@ function updateLandingApproach(physics, ctrl) {
   scenarioRuntime.landAgl = y - RUNWAY.y;
   scenarioRuntime.landAlign = x - RUNWAY.x;
 
-  // Ideal height on 3° path (only meaningful before/over threshold)
+  // Phase: large lateral offset / not yet on the extended centerline → base
+  const lat = Math.abs(x - RUNWAY.x);
+  if (dist < -20) scenarioRuntime.landPhase = 'over';
+  else if (lat > 55 || (lat > 28 && dist > 80)) scenarioRuntime.landPhase = 'base';
+  else scenarioRuntime.landPhase = 'final';
+
+  // Ideal height on 3° path (only meaningful on final / near centerline)
   const pathDist = Math.max(0, dist);
   const idealAgl = glidePathHeight(pathDist);
   const pathErr = scenarioRuntime.landAgl - idealAgl;
   scenarioRuntime.landPathErr = pathErr;
 
-  // Path band grows slightly with distance
-  const band = 8 + pathDist * 0.02;
+  // Path band grows slightly with distance; looser while still on base
+  const band =
+    (8 + pathDist * 0.02) * (scenarioRuntime.landPhase === 'base' ? 1.6 : 1);
   if (pathErr > band) scenarioRuntime.landPath = 'high';
   else if (pathErr < -band) scenarioRuntime.landPath = 'low';
   else scenarioRuntime.landPath = 'on';
@@ -159,6 +200,144 @@ function updateLandingApproach(physics, ctrl) {
     scenarioRuntime.landScore = scoreLanding(physics);
     scenarioRuntime.landScored = true;
   }
+}
+
+/**
+ * Cross-country triangle: cylinder turnpoints + home.
+ * @param {import('./physics.js').GliderPhysics} physics
+ * @param {number} dt
+ */
+function updateCrossCountry(physics, dt) {
+  if (!scenarioRuntime.xcActive || scenarioRuntime.xcDone) return;
+
+  const x = physics.position.x;
+  const z = physics.position.z;
+  const y = physics.position.y;
+
+  // Track distance flown
+  const dx = x - scenarioRuntime.xcLastX;
+  const dz = z - scenarioRuntime.xcLastZ;
+  const step = Math.hypot(dx, dz);
+  if (step < 80) scenarioRuntime.xcTrack += step; // ignore teleports
+  scenarioRuntime.xcLastX = x;
+  scenarioRuntime.xcLastZ = z;
+
+  const agl = y - RUNWAY.y;
+  if (agl > scenarioRuntime.xcMaxAlt) scenarioRuntime.xcMaxAlt = agl;
+
+  const wp = XC_WAYPOINTS[scenarioRuntime.xcWp];
+  if (!wp) return;
+
+  const ddx = wp.x - x;
+  const ddz = wp.z - z;
+  const dist = Math.hypot(ddx, ddz);
+  scenarioRuntime.xcDist = dist;
+  // Bearing: 0 = −Z (runway heading / “north” in this world)
+  scenarioRuntime.xcBearing =
+    ((Math.atan2(ddx, -ddz) * 180) / Math.PI + 360) % 360;
+
+  if (dist < wp.r) {
+    scenarioRuntime.xcLegs += 1;
+    scenarioRuntime.xcWp += 1;
+    if (scenarioRuntime.xcWp >= XC_WAYPOINTS.length) {
+      scenarioRuntime.xcDone = true;
+      scenarioRuntime.xcWp = XC_WAYPOINTS.length - 1;
+      scenarioRuntime.xcScore = scoreCrossCountry(physics);
+      scenarioRuntime.xcScored = true;
+    }
+  }
+
+  // Score out-landing / crash
+  if (
+    !scenarioRuntime.xcScored &&
+    !physics.alive &&
+    (physics.grounded || physics.landingQuality)
+  ) {
+    scenarioRuntime.xcScore = scoreCrossCountry(physics);
+    scenarioRuntime.xcScored = true;
+  }
+}
+
+/**
+ * Score XC triangle: legs, height management, finish.
+ * @param {import('./physics.js').GliderPhysics} physics
+ */
+export function scoreCrossCountry(physics) {
+  const debrief = [];
+  const detail = {};
+  let total = 0;
+
+  const legs = scenarioRuntime.xcLegs;
+  const done = scenarioRuntime.xcDone;
+  const trackKm = scenarioRuntime.xcTrack / 1000;
+  const maxAlt = scenarioRuntime.xcMaxAlt;
+
+  // Legs (3 = full triangle → 45 pts)
+  let legPts = Math.min(45, legs * 15);
+  if (done) {
+    legPts = 45;
+    debrief.push('Triangle complete — all turnpoints claimed.');
+  } else if (legs === 2) {
+    debrief.push('Two turnpoints — almost home.');
+  } else if (legs === 1) {
+    debrief.push('First turnpoint in the bag.');
+  } else {
+    debrief.push('No turnpoints yet — circle the yellow thermal columns.');
+  }
+  detail.legs = legPts;
+  total += legPts;
+
+  // Distance / endurance (max 20)
+  let distPts = 3;
+  if (trackKm > 8) distPts = 20;
+  else if (trackKm > 5) distPts = 14;
+  else if (trackKm > 2.5) distPts = 8;
+  detail.distance = distPts;
+  total += distPts;
+  debrief.push(`Track flown: ${trackKm.toFixed(1)} km.`);
+
+  // Height management (max 15)
+  let altPts = 4;
+  if (maxAlt > 320) {
+    altPts = 15;
+    debrief.push('Good height — climbed in lift.');
+  } else if (maxAlt > 220) {
+    altPts = 10;
+    debrief.push('Some climb achieved.');
+  } else {
+    debrief.push('Stayed low — thermals help stay aloft.');
+  }
+  detail.altitude = altPts;
+  total += altPts;
+
+  // Finish quality (max 20)
+  if (done && !physics.alive && physics.onRunway) {
+    total += 20;
+    debrief.push('Finished and landed back on the field.');
+  } else if (done) {
+    total += 12;
+    debrief.push('Task finished — land when ready.');
+  } else if (physics.landingQuality === 'crash') {
+    total = Math.max(0, total - 15);
+    debrief.push('Flight ended in a crash.');
+  } else if (!physics.alive) {
+    total = Math.max(0, total - 5);
+    debrief.push('Out-landing before completing the triangle.');
+  }
+
+  total = THREE.MathUtils.clamp(Math.round(total), 0, 100);
+  let grade = 'F';
+  if (done && total >= 85) grade = 'A';
+  else if (done && total >= 70) grade = 'B';
+  else if (legs >= 2 || total >= 55) grade = 'C';
+  else if (total >= 35) grade = 'D';
+
+  return {
+    total,
+    grade,
+    debrief,
+    detail: { ...detail, legs, trackKm, maxAlt, done },
+  };
 }
 
 /**
@@ -485,20 +664,21 @@ export const SCENARIOS = {
     id: 'landing',
     name: 'Landing',
     blurb:
-      'Aim the numbers on a 3° path. Hold approach speed, gear down, flare, stay on the centerline. Brakes after touchdown.',
+      'High right base — not lined up. Turn final, capture the 3° path, gear down, flare on centerline. Brakes after touchdown.',
     gear: 1,
     terrain: 'airfield',
     spawn() {
-      // High final on centerline, ~3° path toward −Z.
-      // Always clear local terrain (approach hills used to bury the spawn).
-      const dist = 320;
-      const z0 = RUNWAY.z + RUNWAY.halfLength + dist;
-      const pathY = RUNWAY.y + glidePathHeight(dist) + 12;
-      const ground = terrainHeight(0, z0);
-      const y0 = Math.max(pathY, ground + 40);
-      // Sink rate roughly matches a 3° path at ~26 m/s
-      const sink = 26 * Math.tan((3 * Math.PI) / 180);
-      return makeSpawn(0, y0, z0, 0, -sink, -26, -0.05, 0);
+      // High right base: offset laterally, past threshold, NOT on centerline.
+      // Pilot must turn, lose height, and establish a final.
+      const thrZ = RUNWAY.z + RUNWAY.halfLength;
+      const x0 = 420; // well right of strip
+      const z0 = thrZ + 160; // abeam / short base, not a long final
+      const ground = terrainHeight(x0, z0);
+      // ~230 m above runway — high enough for a base → final pattern
+      const y0 = Math.max(RUNWAY.y + 230, ground + 90);
+      // Heading −X (toward centerline), slight sink, some −Z for base geometry
+      // yaw = −π/2 → nose along −X
+      return makeSpawn(x0, y0, z0, -20, -1.8, -10, -0.04, -Math.PI / 2);
     },
     onStart(physics) {
       scenarioRuntime.phase = 'flight';
@@ -510,15 +690,65 @@ export const SCENARIOS = {
       scenarioRuntime.landBrakesUsed = false;
       scenarioRuntime.landWasRolling = false;
       scenarioRuntime.landTouchSink = 0;
+      scenarioRuntime.landPhase = 'base';
+      scenarioRuntime.xcActive = false;
       if (physics) {
         physics.landingQuality = 'crash';
       }
     },
-    /** Track glide path / speed / config; score on stop. */
+    /** Track approach phase / speed / config; score on stop. */
     update(physics, dt, ctrl) {
       if (!scenarioRuntime.landingActive) return;
       scenarioRuntime.t += dt;
       updateLandingApproach(physics, ctrl || {});
+    },
+  },
+
+  crosscountry: {
+    id: 'crosscountry',
+    name: 'Cross country',
+    blurb:
+      'Triangle task after a high release. Circle yellow thermals, claim TP1 → TP2 → HOME. Stay aloft and close the task.',
+    gear: 0,
+    terrain: 'airfield',
+    spawn() {
+      // High free release near the field, pointed toward TP1 (SE/NE of field)
+      const x0 = -40;
+      const z0 = RUNWAY.z - 60;
+      const ground = terrainHeight(x0, z0);
+      const y0 = Math.max(RUNWAY.y + 380, ground + 300);
+      // Cruise toward first TP (~420, −520): roughly −Z with a little +X
+      const yaw = Math.atan2(0.35, 1); // slight right of runway heading
+      const spd = 28;
+      const vx = Math.sin(yaw) * spd;
+      const vz = -Math.cos(yaw) * spd;
+      return makeSpawn(x0, y0, z0, vx, -0.6, vz, -0.03, yaw);
+    },
+    onStart(physics) {
+      scenarioRuntime.phase = 'flight';
+      scenarioRuntime.released = true;
+      scenarioRuntime.t = 0;
+      scenarioRuntime.landingActive = false;
+      scenarioRuntime.xcActive = true;
+      scenarioRuntime.xcWp = 0;
+      scenarioRuntime.xcLegs = 0;
+      scenarioRuntime.xcDone = false;
+      scenarioRuntime.xcTrack = 0;
+      scenarioRuntime.xcMaxAlt = 0;
+      scenarioRuntime.xcDist = 0;
+      scenarioRuntime.xcBearing = 0;
+      scenarioRuntime.xcScore = null;
+      scenarioRuntime.xcScored = false;
+      if (physics) {
+        scenarioRuntime.xcLastX = physics.position.x;
+        scenarioRuntime.xcLastZ = physics.position.z;
+        scenarioRuntime.xcMaxAlt = physics.position.y - RUNWAY.y;
+      }
+    },
+    update(physics, dt) {
+      if (!scenarioRuntime.xcActive) return;
+      scenarioRuntime.t += dt;
+      updateCrossCountry(physics, dt);
     },
   },
 
@@ -702,6 +932,7 @@ export const SCENARIO_LIST = [
   SCENARIOS.tow,
   SCENARIOS.ridge,
   SCENARIOS.landing,
+  SCENARIOS.crosscountry,
 ];
 
 export let activeScenario = SCENARIOS.ridge;
@@ -709,11 +940,17 @@ export let activeScenario = SCENARIOS.ridge;
 export function setActiveScenario(id) {
   activeScenario = SCENARIOS[id] || SCENARIOS.ridge;
   scenarioRuntime.id = activeScenario.id;
-  // Clear landing session when switching scenarios in the menu
+  // Clear session flags when switching scenarios in the menu
   if (activeScenario.id !== 'landing') {
     scenarioRuntime.landingActive = false;
     scenarioRuntime.landScore = null;
     scenarioRuntime.landScored = false;
+  }
+  if (activeScenario.id !== 'crosscountry') {
+    scenarioRuntime.xcActive = false;
+    scenarioRuntime.xcScore = null;
+    scenarioRuntime.xcScored = false;
+    scenarioRuntime.xcDone = false;
   }
   return activeScenario;
 }

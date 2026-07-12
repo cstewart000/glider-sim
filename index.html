@@ -12,51 +12,141 @@
 
       <div id="hud">
         <div id="cockpit-overlay" aria-hidden="true">
-          <svg id="cockpit-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMax meet" aria-hidden="true">
+          <!-- Concept-art coaming: white fill + black ink lines (matches reference drawing) -->
+          <svg id="cockpit-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMax meet" aria-hidden="true">
             <defs>
-              <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#f8f8fa" stop-opacity="0"/>
-                <stop offset="35%" stop-color="#f8f8fa" stop-opacity="0"/>
-                <stop offset="100%" stop-color="#f0f0f4" stop-opacity="0.78"/>
-              </linearGradient>
-              <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#fafafc"/>
-                <stop offset="100%" stop-color="#e8e8ee"/>
+              <linearGradient id="ck-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#fbfbfc"/>
+                <stop offset="100%" stop-color="#f0f0f4"/>
               </linearGradient>
             </defs>
-            <!-- Low coaming only — sky stays open like concept art -->
-            <rect x="0" y="340" width="800" height="160" fill="url(#fade)"/>
-            <path d="M 0 500 L 40 420 L 200 380 L 220 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.2" opacity="0.4"/>
-            <path d="M 800 500 L 760 420 L 600 380 L 580 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.2" opacity="0.4"/>
-            <path d="M 360 500 L 385 420 L 400 360 L 415 420 L 440 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.1" opacity="0.35"/>
-            <!-- Airbrake lever -->
-            <g id="cockpit-brake" transform="translate(250, 430)">
-              <rect x="-8" y="-52" width="16" height="56" rx="3" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1.2"/>
-              <line x1="-5" y1="-45" x2="5" y2="-45" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
-              <line x1="-5" y1="-8" x2="5" y2="-8" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
-              <text x="0" y="18" text-anchor="middle" font-size="11" font-family="system-ui,sans-serif" fill="#5a6a78" letter-spacing="0.08em">BRK</text>
+
+            <!-- Outer hull / coaming silhouette — long nose + wing roots (concept) -->
+            <path
+              id="ck-hull"
+              d="M 0 700
+                 L 0 480
+                 C 40 450, 120 400, 220 355
+                 C 300 320, 380 295, 480 278
+                 C 530 268, 570 262, 600 258
+                 C 630 262, 670 268, 720 278
+                 C 820 295, 900 320, 980 355
+                 C 1080 400, 1160 450, 1200 480
+                 L 1200 700 Z"
+              fill="url(#ck-fill)"
+              stroke="#2a2a2e"
+              stroke-width="2.2"
+              stroke-linejoin="round"/>
+
+            <!-- Inner coaming crease (second ink contour) -->
+            <path
+              d="M 55 700
+                 L 70 500
+                 C 130 460, 220 410, 320 375
+                 C 400 348, 480 330, 600 320
+                 C 720 330, 800 348, 880 375
+                 C 980 410, 1070 460, 1130 500
+                 L 1145 700"
+              fill="none"
+              stroke="#2a2a2e"
+              stroke-width="1.4"
+              opacity="0.75"/>
+
+            <!-- Left wing surface plate -->
+            <path
+              d="M 0 700 L 0 520 C 80 500, 160 470, 240 445 L 280 700 Z"
+              fill="#f6f6f8"
+              stroke="#2a2a2e"
+              stroke-width="1.5"
+              stroke-linejoin="round"/>
+            <path d="M 30 700 L 90 510" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
+            <path d="M 100 700 L 160 490" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.3"/>
+            <path d="M 180 700 L 220 470" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.28"/>
+
+            <!-- Right wing surface plate -->
+            <path
+              d="M 1200 700 L 1200 520 C 1120 500, 1040 470, 960 445 L 920 700 Z"
+              fill="#f6f6f8"
+              stroke="#2a2a2e"
+              stroke-width="1.5"
+              stroke-linejoin="round"/>
+            <path d="M 1170 700 L 1110 510" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
+            <path d="M 1100 700 L 1040 490" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.3"/>
+            <path d="M 1020 700 L 980 470" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.28"/>
+
+            <!-- Long center spine / nose deck (concept hero) -->
+            <path
+              d="M 520 700
+                 L 545 520
+                 L 565 400
+                 L 580 330
+                 L 600 270
+                 L 620 330
+                 L 635 400
+                 L 655 520
+                 L 680 700 Z"
+              fill="#f4f4f7"
+              stroke="#2a2a2e"
+              stroke-width="1.6"
+              stroke-linejoin="round"/>
+            <!-- Spine centerline -->
+            <path d="M 600 700 L 600 272" fill="none" stroke="#2a2a2e" stroke-width="1.1" opacity="0.55"/>
+            <!-- Spine plate breaks -->
+            <path d="M 548 520 L 652 520" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.4"/>
+            <path d="M 562 400 L 638 400" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.4"/>
+            <path d="M 575 335 L 625 335" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.4"/>
+
+            <!-- Instrument stack / panel block on spine -->
+            <path
+              d="M 555 560 L 555 500 L 645 500 L 645 560 Z"
+              fill="#eeeef2"
+              stroke="#2a2a2e"
+              stroke-width="1.4"/>
+            <rect x="565" y="512" width="22" height="22" rx="11" fill="#e8eef2" stroke="#2a2a2e" stroke-width="1.1"/>
+            <rect x="589" y="508" width="26" height="26" rx="13" fill="#e8eef2" stroke="#2a2a2e" stroke-width="1.1"/>
+            <rect x="617" y="512" width="22" height="22" rx="11" fill="#e8eef2" stroke="#2a2a2e" stroke-width="1.1"/>
+            <circle cx="576" cy="523" r="2.5" fill="#3cc8dc"/>
+            <circle cx="602" cy="521" r="2.5" fill="#3cc8dc"/>
+            <circle cx="628" cy="523" r="2.5" fill="#3cc8dc"/>
+            <!-- Small console boxes below gauges -->
+            <rect x="570" y="540" width="60" height="12" rx="1" fill="#f0f0f4" stroke="#2a2a2e" stroke-width="1"/>
+
+            <!-- Nose tip cap -->
+            <path
+              d="M 585 278 C 592 265, 608 265, 615 278 L 600 258 Z"
+              fill="#f8f8fa"
+              stroke="#2a2a2e"
+              stroke-width="1.5"
+              stroke-linejoin="round"/>
+
+            <!-- Airbrake lever (left) -->
+            <g id="cockpit-brake" transform="translate(380, 640)">
+              <rect x="-10" y="-58" width="20" height="62" rx="3" fill="#ececf0" stroke="#2a2a2e" stroke-width="1.3"/>
+              <line x1="-6" y1="-48" x2="6" y2="-48" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
+              <line x1="-6" y1="-12" x2="6" y2="-12" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
               <g id="cockpit-brake-arm" transform="rotate(-18)">
-                <line x1="0" y1="0" x2="0" y2="-48" stroke="#2c2c32" stroke-width="3.2" stroke-linecap="round"/>
-                <circle cx="0" cy="-48" r="7" fill="#e8a090" stroke="#2c2c32" stroke-width="1.3" opacity="0.9"/>
+                <line x1="0" y1="0" x2="0" y2="-50" stroke="#2a2a2e" stroke-width="3" stroke-linecap="round"/>
+                <circle cx="0" cy="-50" r="7" fill="#e8a090" stroke="#2a2a2e" stroke-width="1.2"/>
               </g>
             </g>
-            <!-- Gear lever -->
-            <g id="cockpit-gear" transform="translate(550, 430)">
-              <rect x="-8" y="-52" width="16" height="56" rx="3" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1.2"/>
-              <line x1="-5" y1="-45" x2="5" y2="-45" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
-              <line x1="-5" y1="-8" x2="5" y2="-8" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
-              <text x="0" y="18" text-anchor="middle" font-size="11" font-family="system-ui,sans-serif" fill="#5a6a78" letter-spacing="0.08em">GEAR</text>
+
+            <!-- Gear lever (right) -->
+            <g id="cockpit-gear" transform="translate(820, 640)">
+              <rect x="-10" y="-58" width="20" height="62" rx="3" fill="#ececf0" stroke="#2a2a2e" stroke-width="1.3"/>
+              <line x1="-6" y1="-48" x2="6" y2="-48" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
+              <line x1="-6" y1="-12" x2="6" y2="-12" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
               <g id="cockpit-gear-arm" transform="rotate(-15)">
-                <line x1="0" y1="0" x2="0" y2="-48" stroke="#2c2c32" stroke-width="3.2" stroke-linecap="round"/>
-                <circle cx="0" cy="-48" r="7" fill="#e8a090" stroke="#2c2c32" stroke-width="1.3" opacity="0.9"/>
+                <line x1="0" y1="0" x2="0" y2="-50" stroke="#2a2a2e" stroke-width="3" stroke-linecap="round"/>
+                <circle cx="0" cy="-50" r="7" fill="#e8a090" stroke="#2a2a2e" stroke-width="1.2"/>
               </g>
             </g>
+
             <!-- Control stick -->
-            <g id="cockpit-stick-base" transform="translate(400, 448)">
-              <ellipse cx="0" cy="0" rx="18" ry="7" fill="#ececf0" stroke="#2c2c32" stroke-width="1.2"/>
+            <g id="cockpit-stick-base" transform="translate(600, 665)">
+              <ellipse cx="0" cy="0" rx="22" ry="8" fill="#ececf0" stroke="#2a2a2e" stroke-width="1.3"/>
               <g id="cockpit-stick">
-                <line id="cockpit-stick-shaft" x1="0" y1="0" x2="0" y2="-58" stroke="#2c2c32" stroke-width="3" stroke-linecap="round"/>
-                <rect id="cockpit-stick-grip" x="-12" y="-72" width="24" height="16" rx="3" fill="#e8e8ec" stroke="#2c2c32" stroke-width="1.3"/>
+                <line id="cockpit-stick-shaft" x1="0" y1="0" x2="0" y2="-70" stroke="#2a2a2e" stroke-width="3.2" stroke-linecap="round"/>
+                <rect id="cockpit-stick-grip" x="-14" y="-86" width="28" height="18" rx="3" fill="#e8e8ec" stroke="#2a2a2e" stroke-width="1.3"/>
               </g>
             </g>
           </svg>
@@ -171,6 +261,13 @@
             <span class="papi-lamp"></span>
             <span class="papi-lamp"></span>
           </div>
+        </div>
+        <!-- Cross-country task -->
+        <div id="xc-panel" class="hidden" aria-live="polite">
+          <div id="xc-title">XC · LEG 1/3</div>
+          <div id="xc-dist">TP —</div>
+          <div id="xc-brg">BRG —</div>
+          <div id="xc-legs">· · ·</div>
         </div>
         <div id="fps"></div>
       </div>

@@ -295,6 +295,166 @@ function makeWingletSegmentGeo(height, le0, te0, le1, te1, tRoot, tTip) {
   return geo;
 }
 
+/**
+ * Single continuous fuselage loft: nose → pod → boom.
+ * Elliptical stations along Z (forward −Z). Low radial segs keep edges clean.
+ */
+function makeFuselageLoftGeo() {
+  // { z, rx, ry, y } — y = section center height
+  const stations = [
+    { z: -2.95, rx: 0.015, ry: 0.015, y: 0.02 }, // needle tip
+    { z: -2.55, rx: 0.1, ry: 0.09, y: 0.02 },
+    { z: -2.1, rx: 0.18, ry: 0.16, y: 0.025 },
+    { z: -1.5, rx: 0.26, ry: 0.24, y: 0.03 },
+    { z: -0.85, rx: 0.31, ry: 0.29, y: 0.03 }, // max pod
+    { z: -0.25, rx: 0.32, ry: 0.3, y: 0.03 },
+    { z: 0.35, rx: 0.28, ry: 0.26, y: 0.04 },
+    { z: 0.95, rx: 0.2, ry: 0.18, y: 0.05 }, // tail cone into boom
+    { z: 1.6, rx: 0.13, ry: 0.12, y: 0.06 },
+    { z: 2.3, rx: 0.1, ry: 0.09, y: 0.065 },
+    { z: 3.0, rx: 0.08, ry: 0.075, y: 0.07 },
+    { z: 3.65, rx: 0.065, ry: 0.06, y: 0.07 }, // boom end (tail attaches ~3.55)
+  ];
+  const radial = 10; // keep modest for concept edge lines
+  const pos = [];
+  const idx = [];
+
+  for (let s = 0; s < stations.length; s++) {
+    const st = stations[s];
+    for (let i = 0; i < radial; i++) {
+      const a = (i / radial) * Math.PI * 2;
+      // Slight bottom flatten (sailplane pod)
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      const flat = sin < 0 ? 0.88 : 1;
+      pos.push(st.rx * cos, st.y + st.ry * sin * flat, st.z);
+    }
+  }
+
+  for (let s = 0; s < stations.length - 1; s++) {
+    for (let i = 0; i < radial; i++) {
+      const i0 = s * radial + i;
+      const i1 = s * radial + ((i + 1) % radial);
+      const j0 = (s + 1) * radial + i;
+      const j1 = (s + 1) * radial + ((i + 1) % radial);
+      idx.push(i0, j0, i1, i1, j0, j1);
+    }
+  }
+
+  // Cap nose tip
+  const tip = pos.length / 3;
+  pos.push(0, stations[0].y, stations[0].z - 0.08);
+  for (let i = 0; i < radial; i++) {
+    idx.push(tip, i, (i + 1) % radial);
+  }
+  // Cap boom end
+  const last = stations.length - 1;
+  const base = last * radial;
+  const end = pos.length / 3;
+  pos.push(0, stations[last].y, stations[last].z + 0.04);
+  for (let i = 0; i < radial; i++) {
+    idx.push(end, base + ((i + 1) % radial), base + i);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Single long low canopy blister (upper shell only).
+ * Local: sits on pod top, long fore-aft, flat-ish sides for clean ink edges.
+ */
+function makeCanopyBlisterGeo() {
+  // Stations along z: half-ellipse upper surface
+  const stations = [
+    { z: -1.55, rx: 0.06, ry: 0.04, y0: 0.2 }, // front tip
+    { z: -1.25, rx: 0.16, ry: 0.12, y0: 0.18 },
+    { z: -0.85, rx: 0.22, ry: 0.18, y0: 0.16 },
+    { z: -0.4, rx: 0.24, ry: 0.2, y0: 0.15 }, // peak
+    { z: 0.05, rx: 0.2, ry: 0.15, y0: 0.16 },
+    { z: 0.35, rx: 0.1, ry: 0.07, y0: 0.18 }, // aft fade into fuse
+  ];
+  // Arc from left rail (−π) to right rail (0) over the top — only upper half
+  const arcSegs = 8;
+  const pos = [];
+  const idx = [];
+
+  for (const st of stations) {
+    for (let i = 0; i <= arcSegs; i++) {
+      const u = i / arcSegs;
+      // π → 0 goes left → top → right (upper semicircle)
+      const a = Math.PI - u * Math.PI;
+      pos.push(st.rx * Math.cos(a), st.y0 + st.ry * Math.sin(a), st.z);
+    }
+  }
+
+  const stride = arcSegs + 1;
+  for (let s = 0; s < stations.length - 1; s++) {
+    for (let i = 0; i < arcSegs; i++) {
+      const a = s * stride + i;
+      const b = a + 1;
+      const c = (s + 1) * stride + i;
+      const d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return { geo, stations, arcSegs };
+}
+
+/** Ink frame rails along canopy base + a few hoop ribs. */
+function addCanopyFrame(canopy, stations, arcSegs) {
+  const lineMat = lineMaterial(false);
+
+  // Left / right longerons (sill rails)
+  for (const side of [-1, 1]) {
+    const verts = [];
+    for (const st of stations) {
+      verts.push(side * st.rx * 0.98, st.y0 + 0.004, st.z);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    const line = new THREE.Line(g, lineMat);
+    line.renderOrder = 3;
+    canopy.add(line);
+  }
+  // Center ridge (top of blister)
+  {
+    const verts = [];
+    for (const st of stations) {
+      verts.push(0, st.y0 + st.ry, st.z);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    const line = new THREE.Line(g, lineMat);
+    line.renderOrder = 3;
+    canopy.add(line);
+  }
+  // Hoop ribs at mid stations (concept arch frames)
+  for (const si of [1, 2, 3, 4]) {
+    const st = stations[si];
+    if (!st) continue;
+    const verts = [];
+    for (let i = 0; i <= arcSegs; i++) {
+      const u = i / arcSegs;
+      const a = Math.PI - u * Math.PI;
+      verts.push(st.rx * Math.cos(a), st.y0 + st.ry * Math.sin(a), st.z);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    const line = new THREE.Line(g, lineMat);
+    line.renderOrder = 3;
+    canopy.add(line);
+  }
+}
+
 export function createGlider() {
   const root = new THREE.Group();
   root.name = 'glider';
@@ -309,74 +469,40 @@ export function createGlider() {
   });
   const dark = fillMaterial({ color: 0x2a2a30 });
   const canopyMat = fillMaterial({
-    color: 0xa8c8d8,
+    color: 0xc8dce8,
     transparent: true,
-    opacity: 0.35,
+    opacity: 0.42,
+    side: THREE.DoubleSide,
   });
 
-  // —— Fuselage ——
+  // —— Fuselage: one continuous loft ——
   const fuse = new THREE.Group();
   fuse.name = 'fuse';
   root.add(fuse);
   root.userData.fuse = fuse;
 
-  const podGeo = new THREE.CylinderGeometry(0.2, 0.34, 3.6, 8, 1);
-  podGeo.rotateZ(Math.PI / 2);
-  podGeo.rotateY(Math.PI / 2);
-  const pod = new THREE.Mesh(podGeo, white);
-  pod.position.set(0, 0.02, -0.15);
-  fuse.add(pod);
-  addEdges(pod, 14);
+  const body = new THREE.Mesh(makeFuselageLoftGeo(), white);
+  body.name = 'fuselageBody';
+  fuse.add(body);
+  // Higher threshold → fewer facet lines, more silhouette / feature edges
+  addEdges(body, 28);
 
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.2, 1.0, 8), white);
-  nose.rotation.x = -Math.PI / 2;
-  nose.position.set(0, 0.02, -2.35);
-  fuse.add(nose);
-  addEdges(nose, 12);
-
-  const boomGeo = new THREE.CylinderGeometry(0.07, 0.14, 3.2, 6, 1);
-  boomGeo.rotateZ(Math.PI / 2);
-  boomGeo.rotateY(Math.PI / 2);
-  const boom = new THREE.Mesh(boomGeo, white);
-  boom.position.set(0, 0.06, 2.35);
-  fuse.add(boom);
-  addEdges(boom, 16);
-
-  // Elongated sailplane canopy (capsule-like), not a bubble dome
+  // —— Canopy: single blister + frame lines ——
   const canopy = new THREE.Group();
   canopy.name = 'canopy';
-  // Long low blister: stretched ellipsoid, cut-ish look via scale
-  const blister = new THREE.Mesh(
-    new THREE.SphereGeometry(0.38, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55),
-    canopyMat
-  );
-  blister.scale.set(0.55, 0.38, 1.85); // narrow, low, long fore-aft
-  blister.position.set(0, 0.22, -0.55);
+  const { geo: canopyGeo, stations: canopyStations, arcSegs } =
+    makeCanopyBlisterGeo();
+  const blister = new THREE.Mesh(canopyGeo, canopyMat);
+  blister.name = 'canopyBlister';
   canopy.add(blister);
-  addEdges(blister, 10);
-  // Slight forward tip (nose of canopy)
-  const canopyNose = new THREE.Mesh(
-    new THREE.SphereGeometry(0.22, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.5),
-    canopyMat
-  );
-  canopyNose.scale.set(0.7, 0.45, 1.1);
-  canopyNose.position.set(0, 0.18, -1.35);
-  canopy.add(canopyNose);
-  addEdges(canopyNose, 12);
-  // Aft fairing into fuselage
-  const canopyAft = new THREE.Mesh(
-    new THREE.SphereGeometry(0.2, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.5),
-    canopyMat
-  );
-  canopyAft.scale.set(0.75, 0.4, 0.9);
-  canopyAft.position.set(0, 0.16, 0.15);
-  canopy.add(canopyAft);
-  addEdges(canopyAft, 12);
+  addEdges(blister, 22);
+  addCanopyFrame(canopy, canopyStations, arcSegs);
   fuse.add(canopy);
   root.userData.canopy = canopy;
 
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.04, 1.4), accent);
-  stripe.position.set(0, 0.14, -1.3);
+  // Thin accent stripe along pod shoulder (kept subtle)
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.025, 1.1), accent);
+  stripe.position.set(0, 0.2, -0.9);
   fuse.add(stripe);
 
   // Retractable main gear — hinge at belly, swings aft/up when retracted
@@ -524,8 +650,8 @@ export function createGlider() {
 
   const camAnchor = new THREE.Object3D();
   camAnchor.name = 'pilotCam';
-  // High eye over a low coaming — matches concept long-nose view
-  camAnchor.position.set(0, 0.62, 0.2);
+  // Clean eye; coaming is 2D concept overlay (not a 3D tub)
+  camAnchor.position.set(0, 0.42, 0.05);
   root.add(camAnchor);
 
   root.scale.setScalar(1.05);
@@ -555,242 +681,30 @@ export function createGlider() {
   return root;
 }
 
-/** Outlined box helper for concept-art cockpit plates. */
-function cockBox(parent, w, h, d, mat, x, y, z, opts = {}) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  if (opts.rx) m.rotation.x = opts.rx;
-  if (opts.ry) m.rotation.y = opts.ry;
-  if (opts.rz) m.rotation.z = opts.rz;
-  parent.add(m);
-  addEdges(m, opts.edge ?? 14);
-  return m;
-}
-
 /**
- * Concept-art first-person cockpit.
- * Eye sits high; coaming stays low so sky fills ~70% of the frame.
- * Long thin nose spine runs far forward like the drawing.
- *
- * Eye ~ (0, 0.62, 0.2) looking −Z. Deck tops ~0.12–0.22 (well below eye).
+ * Minimal 3D cockpit anchors only — visual coaming is the 2D concept-art SVG.
+ * Stick/lever groups exist so animation hooks keep working if re-enabled later.
  */
-function buildCockpitInterior(mats) {
-  const { white, offWhite, dark, red, accent } = mats;
-  const panelMat = fillMaterial({ color: 0xf2f2f6 });
-  const gripMat = fillMaterial({ color: 0xc8c8d0 });
-  const frameMat = fillMaterial({ color: 0x2c2c32 });
-  const ink = fillMaterial({ color: 0x3a3a42 });
-
+function buildCockpitInterior(_mats) {
   const cockpit = new THREE.Group();
   cockpit.name = 'cockpitInterior';
-
-  // ── Minimal seat (only visible when looking down/aft) ──
-  cockBox(cockpit, 0.36, 0.04, 0.38, offWhite, 0, 0.05, 0.28, { edge: 18 });
-  cockBox(cockpit, 0.36, 0.28, 0.04, offWhite, 0, 0.18, 0.46, {
-    rx: -0.08,
-    edge: 16,
-  });
-
-  // ── Floor deck — low, wide, not a tall tub ──
-  cockBox(cockpit, 1.05, 0.025, 1.1, white, 0, 0.0, -0.15, { edge: 14 });
-  // Center spine base under stick
-  cockBox(cockpit, 0.14, 0.03, 0.7, offWhite, 0, 0.02, -0.2, { edge: 16 });
-
-  // Pedals (low, forward)
-  for (const s of [-1, 1]) {
-    cockBox(cockpit, 0.09, 0.02, 0.12, gripMat, s * 0.12, 0.04, -0.55, {
-      rx: -0.35,
-      edge: 18,
-    });
-  }
-
-  // ── Side sills only (no tall walls) — concept lower coaming ──
-  for (const s of [-1, 1]) {
-    // Flat sill strip
-    cockBox(cockpit, 0.14, 0.04, 1.4, white, s * 0.48, 0.06, -0.5, {
-      rz: s * 0.04,
-      edge: 12,
-    });
-    // Thin ink rail along sill top
-    cockBox(cockpit, 0.02, 0.02, 1.5, frameMat, s * 0.52, 0.1, -0.55, {
-      rz: s * 0.06,
-      edge: 16,
-    });
-    // Forward taper of sill toward wing root
-    cockBox(cockpit, 0.1, 0.03, 0.8, white, s * 0.55, 0.07, -1.4, {
-      rz: s * 0.05,
-      ry: s * -0.08,
-      edge: 14,
-    });
-  }
-
-  // ── Slim instrument panel (thin strip, not a bulkhead) ──
-  // Top of panel ~ y 0.18 — well under eye at 0.62
-  const panelGroup = new THREE.Group();
-  panelGroup.name = 'panel';
-  panelGroup.position.set(0, 0.08, -0.42);
-
-  cockBox(panelGroup, 0.55, 0.12, 0.04, panelMat, 0, 0.04, 0, {
-    rx: -0.45,
-    edge: 12,
-  });
-  // Tiny gauge pips (don't dominate)
-  for (const x of [-0.14, 0, 0.14]) {
-    const bezel = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.028, 0.028, 0.015, 7),
-      dark
-    );
-    bezel.rotation.x = Math.PI / 2 - 0.45;
-    bezel.position.set(x, 0.055, 0.025);
-    panelGroup.add(bezel);
-    addEdges(bezel, 20);
-    const hub = new THREE.Mesh(
-      new THREE.SphereGeometry(0.006, 4, 3),
-      fillMaterial({ color: 0x3cc8dc })
-    );
-    hub.position.set(x, 0.06, 0.032);
-    panelGroup.add(hub);
-  }
-  cockBox(panelGroup, 0.4, 0.008, 0.012, accent, 0, -0.01, 0.02, {
-    rx: -0.45,
-    edge: 20,
-  });
-  cockpit.add(panelGroup);
-
-  // ── LONG nose spine — concept hero (extends far forward) ──
-  const spine = new THREE.Group();
-  spine.name = 'noseSpine';
-
-  // Stick pedestal (compact)
-  cockBox(spine, 0.1, 0.06, 0.22, white, 0, 0.06, -0.05, { edge: 14 });
-  cockBox(spine, 0.08, 0.05, 0.16, offWhite, 0, 0.09, -0.22, { edge: 16 });
-  // Low equipment stack
-  cockBox(spine, 0.09, 0.045, 0.14, white, 0, 0.1, -0.38, { edge: 14 });
-  cockBox(spine, 0.06, 0.03, 0.08, dark, 0, 0.13, -0.42, { edge: 18 });
-
-  // Tapering deck plates — long run to tip (~4.5 m)
-  // y stays low so silhouette is a thin wedge in frame
-  const plates = [
-    { w: 0.38, h: 0.035, d: 0.4, y: 0.06, z: -0.75 },
-    { w: 0.34, h: 0.032, d: 0.4, y: 0.07, z: -1.15 },
-    { w: 0.3, h: 0.03, d: 0.4, y: 0.08, z: -1.55 },
-    { w: 0.26, h: 0.028, d: 0.4, y: 0.09, z: -1.95 },
-    { w: 0.22, h: 0.026, d: 0.4, y: 0.1, z: -2.35 },
-    { w: 0.18, h: 0.024, d: 0.4, y: 0.11, z: -2.75 },
-    { w: 0.14, h: 0.022, d: 0.4, y: 0.12, z: -3.15 },
-    { w: 0.11, h: 0.02, d: 0.4, y: 0.13, z: -3.55 },
-    { w: 0.08, h: 0.018, d: 0.35, y: 0.14, z: -3.9 },
-    { w: 0.055, h: 0.016, d: 0.3, y: 0.145, z: -4.2 },
-  ];
-  for (const p of plates) {
-    const rx = 0.02 + (-p.z) * 0.008;
-    cockBox(spine, p.w, p.h, p.d, white, 0, p.y, p.z, { rx, edge: 11 });
-    // Centerline ridge (concept ink spine)
-    cockBox(spine, 0.02, 0.014, p.d * 0.92, offWhite, 0, p.y + 0.02, p.z, {
-      rx,
-      edge: 18,
-    });
-  }
-
-  // Parallel stringers along full nose length
-  for (const s of [-1, 1]) {
-    cockBox(spine, 0.015, 0.018, 3.6, frameMat, s * 0.1, 0.09, -2.3, {
-      rz: s * 0.02,
-      edge: 16,
-    });
-    // Sparse structural ribs
-    for (const z of [-1.2, -1.9, -2.6, -3.3, -3.9]) {
-      const t = clamp01Local((-z - 0.5) / 4);
-      const w = 0.08 * (1 - t * 0.55);
-      cockBox(spine, w, 0.025, 0.015, ink, s * (0.08 + t * 0.02), 0.1 + t * 0.04, z, {
-        edge: 20,
-      });
-    }
-  }
-
-  // Nose tip
-  const noseTip = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.28, 6), white);
-  noseTip.rotation.x = -Math.PI / 2;
-  noseTip.position.set(0, 0.155, -4.45);
-  spine.add(noseTip);
-  addEdges(noseTip, 12);
-
-  cockpit.add(spine);
-
-  // ── Wing roots — flat, low, extending out (concept side planes) ──
-  for (const s of [-1, 1]) {
-    const root = new THREE.Group();
-    root.position.set(s * 0.55, 0.05, -0.9);
-    root.rotation.z = s * 0.06;
-    // Long chord, thin thickness
-    cockBox(root, 1.4, 0.03, 0.7, white, s * 0.55, 0, -0.4, { edge: 10 });
-    // Forward LE wedge
-    cockBox(root, 1.2, 0.025, 0.15, offWhite, s * 0.5, 0.015, -0.72, {
-      rx: 0.4,
-      edge: 14,
-    });
-    // Fairing into fuselage
-    cockBox(root, 0.25, 0.05, 0.5, white, s * 0.05, 0.01, -0.1, {
-      rz: s * -0.15,
-      edge: 14,
-    });
-    // Far outer tip hint
-    cockBox(root, 0.5, 0.025, 0.45, white, s * 1.35, 0.02, -0.35, {
-      rz: s * 0.04,
-      edge: 14,
-    });
-    // Rib lines
-    for (const x of [0.25, 0.55, 0.9, 1.25]) {
-      cockBox(root, 0.012, 0.02, 0.55, ink, s * x, 0.02, -0.35, { edge: 20 });
-    }
-    cockpit.add(root);
-  }
-
-  // ── Stick (short, low — bottom of frame only) ──
-  cockBox(cockpit, 0.06, 0.03, 0.06, dark, 0, 0.06, 0.02, { edge: 18 });
+  // Invisible pivots (SVG draws stick/levers; 3D stays empty for clean FP)
   const stickPivot = new THREE.Group();
   stickPivot.name = 'stickPivot';
-  stickPivot.position.set(0, 0.08, 0.02);
+  stickPivot.visible = false;
   cockpit.add(stickPivot);
-  const stickShaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.012, 0.016, 0.22, 5),
-    offWhite
-  );
-  stickShaft.position.set(0, 0.11, 0);
-  stickPivot.add(stickShaft);
-  addEdges(stickShaft, 16);
-  cockBox(stickPivot, 0.045, 0.06, 0.035, gripMat, 0, 0.22, 0, { edge: 16 });
-  cockBox(stickPivot, 0.018, 0.02, 0.018, red, 0, 0.2, 0.02, { edge: 20 });
-
-  // ── Levers (low on sills) ──
   const brakeLever = new THREE.Group();
   brakeLever.name = 'brakeLever';
-  brakeLever.position.set(-0.28, 0.1, -0.18);
+  brakeLever.visible = false;
   cockpit.add(brakeLever);
-  cockBox(brakeLever, 0.03, 0.05, 0.03, dark, 0, 0, 0, { edge: 18 });
-  cockBox(brakeLever, 0.014, 0.12, 0.014, offWhite, 0, 0.06, 0, { edge: 16 });
-  const brakeKnob = new THREE.Mesh(new THREE.SphereGeometry(0.02, 5, 4), red);
-  brakeKnob.position.set(0, 0.13, 0);
-  brakeLever.add(brakeKnob);
-
   const gearLever = new THREE.Group();
   gearLever.name = 'gearLever';
-  gearLever.position.set(0.28, 0.1, -0.18);
+  gearLever.visible = false;
   cockpit.add(gearLever);
-  cockBox(gearLever, 0.03, 0.05, 0.03, dark, 0, 0, 0, { edge: 18 });
-  cockBox(gearLever, 0.014, 0.12, 0.014, offWhite, 0, 0.06, 0, { edge: 16 });
-  const gearKnob = new THREE.Mesh(new THREE.SphereGeometry(0.02, 5, 4), red);
-  gearKnob.position.set(0, 0.13, 0);
-  gearLever.add(gearKnob);
-
   cockpit.userData.stickPivot = stickPivot;
   cockpit.userData.brakeLever = brakeLever;
   cockpit.userData.gearLever = gearLever;
   return cockpit;
-}
-
-function clamp01Local(t) {
-  return t < 0 ? 0 : t > 1 ? 1 : t;
 }
 
 /** Spin main wheel while ground-rolling (speed m/s). */

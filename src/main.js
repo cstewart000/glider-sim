@@ -25,7 +25,7 @@ import {
 import { flightAudio } from './flightAudio.js';
 import {
   SCENARIO_LIST, setActiveScenario, getActiveScenario, scenarioRuntime,
-  isLaunchAttached, releaseLaunch, scoreLanding,
+  isLaunchAttached, releaseLaunch, scoreLanding, scoreCrossCountry,
 } from './scenarios.js';
 import {
   initScenarioVisuals, setScenarioVisualMode, updateScenarioVisuals,
@@ -346,8 +346,7 @@ const _tmpCam = new THREE.Vector3();
 function cockpitEyeFromPose(pos, quat, out) {
   _fwd.set(0, 0, -1).applyQuaternion(quat);
   _up.set(0, 1, 0).applyQuaternion(quat);
-  // High over low coaming — concept long-nose view (matches pilotCam)
-  out.copy(pos).addScaledVector(_up, 0.65).addScaledVector(_fwd, 0.22);
+  out.copy(pos).addScaledVector(_up, 0.45).addScaledVector(_fwd, 0.08);
   return out;
 }
 
@@ -388,16 +387,14 @@ function updateCamera(dt, renderPos, renderQuat) {
   const mode = rolling ? 1 : cameraMode;
 
   if (mode === 0) {
-    // First-person: 3D cockpit tub + optional faint 2D overlay for levers cue
+    // First-person: hide airframe; concept coaming is the 2D SVG overlay
     setCockpitVisible(gliderMesh, true);
     gliderMesh.visible = true;
-    // Soft 2D coaming only when looking mostly forward (not VR)
+    // Full concept coaming when looking forward; clear when looking out
     setCockpitOverlayVisible(!lookingAway && !isXRPresenting());
 
-    // Eye point in cockpit (interpolated pose)
     cockpitEyeFromPose(pos, quat, camPos);
 
-    // Look vector: yaw about body up, then pitch about (yawed) right
     _lookDir.copy(_fwd);
     _lookYawQ.setFromAxisAngle(_up, lookYaw);
     _lookDir.applyQuaternion(_lookYawQ);
@@ -405,17 +402,16 @@ function updateCamera(dt, renderPos, renderQuat) {
     _lookPitchQ.setFromAxisAngle(_right, lookPitch);
     _lookDir.applyQuaternion(_lookPitchQ);
 
-    camTarget.copy(camPos).addScaledVector(_lookDir, 80);
-    // Minimal down bias — keep coaming in bottom ~25% like concept art
-    if (!lookingAway) camTarget.addScaledVector(_up, -0.08);
+    camTarget.copy(camPos).addScaledVector(_lookDir, 100);
+    // Level-ish look — coaming is drawn in 2D, not forced by camera pitch
+    if (!lookingAway) camTarget.addScaledVector(_up, -0.05);
 
     camera.position.copy(camPos);
     camera.up.copy(_up);
     camera.lookAt(camTarget);
-    camera.near = 0.06;
+    camera.near = 0.1;
     camera.far = Math.max(camera.far || 3000, 3000);
-    // Slightly tighter FOV so long nose reads further into the frame
-    camera.fov = lookingAway ? 75 : 62;
+    camera.fov = lookingAway ? 75 : 60;
     camera.updateProjectionMatrix();
   } else if (mode === 1) {
     gliderMesh.visible = true;
@@ -691,16 +687,17 @@ function tick(_time, frame) {
 
     // Rolling ends when stopped → 3s hold then menu
     if (!physics.alive) {
-      // Finalize landing score before leaving the sim loop
-      if (
-        scenarioRuntime.landingActive &&
-        !scenarioRuntime.landScored
-      ) {
+      // Finalize scenario scores before leaving the sim loop
+      if (scenarioRuntime.landingActive && !scenarioRuntime.landScored) {
         scenarioRuntime.landScore = scoreLanding(physics);
         scenarioRuntime.landScored = true;
         if (scenarioRuntime.landScore?.grade) {
           physics.landingQuality = scenarioRuntime.landScore.grade;
         }
+      }
+      if (scenarioRuntime.xcActive && !scenarioRuntime.xcScored) {
+        scenarioRuntime.xcScore = scoreCrossCountry(physics);
+        scenarioRuntime.xcScored = true;
       }
       endFlight();
     }

@@ -1,44 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMax meet">
-  <!-- Minimal low coaming cue — 3D long nose is primary -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMax meet">
+  <!-- Concept-art sailplane coaming — white fill + black ink -->
   <defs>
-    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#f8f8fa" stop-opacity="0"/>
-      <stop offset="50%" stop-color="#f8f8fa" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#f0f0f4" stop-opacity="0.4"/>
-    </linearGradient>
-    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#fafafc"/>
-      <stop offset="100%" stop-color="#e8e8ee"/>
+    <linearGradient id="ck-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fbfbfc"/>
+      <stop offset="100%" stop-color="#f0f0f4"/>
     </linearGradient>
   </defs>
 
-  <rect x="0" y="340" width="800" height="160" fill="url(#fade)"/>
-  <path d="M 0 500 L 40 420 L 200 380 L 220 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.2" opacity="0.4"/>
-  <path d="M 800 500 L 760 420 L 600 380 L 580 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.2" opacity="0.4"/>
-  <path d="M 360 500 L 385 420 L 400 360 L 415 420 L 440 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.1" opacity="0.35"/>
+  <path
+    d="M 0 700 L 0 480 C 40 450, 120 400, 220 355 C 300 320, 380 295, 480 278 C 530 268, 570 262, 600 258 C 630 262, 670 268, 720 278 C 820 295, 900 320, 980 355 C 1080 400, 1160 450, 1200 480 L 1200 700 Z"
+    fill="url(#ck-fill)" stroke="#2a2a2e" stroke-width="2.2" stroke-linejoin="round"/>
 
-  <g id="cockpit-brake" transform="translate(250, 455)">
-    <rect x="-6" y="-36" width="12" height="40" rx="2" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1"/>
+  <path
+    d="M 55 700 L 70 500 C 130 460, 220 410, 320 375 C 400 348, 480 330, 600 320 C 720 330, 800 348, 880 375 C 980 410, 1070 460, 1130 500 L 1145 700"
+    fill="none" stroke="#2a2a2e" stroke-width="1.4" opacity="0.75"/>
+
+  <path d="M 0 700 L 0 520 C 80 500, 160 470, 240 445 L 280 700 Z" fill="#f6f6f8" stroke="#2a2a2e" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M 30 700 L 90 510" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
+  <path d="M 100 700 L 160 490" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.3"/>
+  <path d="M 180 700 L 220 470" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.28"/>
+
+  <path d="M 1200 700 L 1200 520 C 1120 500, 1040 470, 960 445 L 920 700 Z" fill="#f6f6f8" stroke="#2a2a2e" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M 1170 700 L 1110 510" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.35"/>
+  <path d="M 1100 700 L 1040 490" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.3"/>
+  <path d="M 1020 700 L 980 470" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.28"/>
+
+  <path
+    d="M 520 700 L 545 520 L 565 400 L 580 330 L 600 270 L 620 330 L 635 400 L 655 520 L 680 700 Z"
+    fill="#f4f4f7" stroke="#2a2a2e" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M 600 700 L 600 272" fill="none" stroke="#2a2a2e" stroke-width="1.1" opacity="0.55"/>
+  <path d="M 548 520 L 652 520" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.4"/>
+  <path d="M 562 400 L 638 400" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.4"/>
+  <path d="M 575 335 L 625 335" fill="none" stroke="#2a2a2e" stroke-width="1" opacity="0.4"/>
+
+  <path d="M 555 560 L 555 500 L 645 500 L 645 560 Z" fill="#eeeef2" stroke="#2a2a2e" stroke-width="1.4"/>
+  <rect x="565" y="512" width="22" height="22" rx="11" fill="#e8eef2" stroke="#2a2a2e" stroke-width="1.1"/>
+  <rect x="589" y="508" width="26" height="26" rx="13" fill="#e8eef2" stroke="#2a2a2e" stroke-width="1.1"/>
+  <rect x="617" y="512" width="22" height="22" rx="11" fill="#e8eef2" stroke="#2a2a2e" stroke-width="1.1"/>
+  <circle cx="576" cy="523" r="2.5" fill="#3cc8dc"/>
+  <circle cx="602" cy="521" r="2.5" fill="#3cc8dc"/>
+  <circle cx="628" cy="523" r="2.5" fill="#3cc8dc"/>
+  <rect x="570" y="540" width="60" height="12" rx="1" fill="#f0f0f4" stroke="#2a2a2e" stroke-width="1"/>
+
+  <path d="M 585 278 C 592 265, 608 265, 615 278 L 600 258 Z" fill="#f8f8fa" stroke="#2a2a2e" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <g id="cockpit-brake" transform="translate(380, 640)">
+    <rect x="-10" y="-58" width="20" height="62" rx="3" fill="#ececf0" stroke="#2a2a2e" stroke-width="1.3"/>
     <g id="cockpit-brake-arm" transform="rotate(-18)">
-      <line x1="0" y1="0" x2="0" y2="-32" stroke="#2c2c32" stroke-width="2.5" stroke-linecap="round"/>
-      <circle cx="0" cy="-32" r="5" fill="#e8a090" stroke="#2c2c32" stroke-width="1"/>
+      <line x1="0" y1="0" x2="0" y2="-50" stroke="#2a2a2e" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="0" cy="-50" r="7" fill="#e8a090" stroke="#2a2a2e" stroke-width="1.2"/>
     </g>
   </g>
 
-  <g id="cockpit-gear" transform="translate(550, 455)">
-    <rect x="-6" y="-36" width="12" height="40" rx="2" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1"/>
+  <g id="cockpit-gear" transform="translate(820, 640)">
+    <rect x="-10" y="-58" width="20" height="62" rx="3" fill="#ececf0" stroke="#2a2a2e" stroke-width="1.3"/>
     <g id="cockpit-gear-arm" transform="rotate(-15)">
-      <line x1="0" y1="0" x2="0" y2="-32" stroke="#2c2c32" stroke-width="2.5" stroke-linecap="round"/>
-      <circle cx="0" cy="-32" r="5" fill="#e8a090" stroke="#2c2c32" stroke-width="1"/>
+      <line x1="0" y1="0" x2="0" y2="-50" stroke="#2a2a2e" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="0" cy="-50" r="7" fill="#e8a090" stroke="#2a2a2e" stroke-width="1.2"/>
     </g>
   </g>
 
-  <g id="cockpit-stick-base" transform="translate(400, 470)">
-    <ellipse cx="0" cy="0" rx="14" ry="5" fill="#ececf0" stroke="#2c2c32" stroke-width="1"/>
+  <g id="cockpit-stick-base" transform="translate(600, 665)">
+    <ellipse cx="0" cy="0" rx="22" ry="8" fill="#ececf0" stroke="#2a2a2e" stroke-width="1.3"/>
     <g id="cockpit-stick">
-      <line id="cockpit-stick-shaft" x1="0" y1="0" x2="0" y2="-40" stroke="#2c2c32" stroke-width="2.5" stroke-linecap="round"/>
-      <rect id="cockpit-stick-grip" x="-9" y="-50" width="18" height="12" rx="2"
-            fill="#e8e8ec" stroke="#2c2c32" stroke-width="1"/>
+      <line id="cockpit-stick-shaft" x1="0" y1="0" x2="0" y2="-70" stroke="#2a2a2e" stroke-width="3.2" stroke-linecap="round"/>
+      <rect id="cockpit-stick-grip" x="-14" y="-86" width="28" height="18" rx="3" fill="#e8e8ec" stroke="#2a2a2e" stroke-width="1.3"/>
     </g>
   </g>
 </svg>

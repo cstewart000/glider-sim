@@ -17,6 +17,7 @@ export class ThermalSystem {
     this.group.name = 'thermals';
     scene.add(this.group);
 
+    // Clustered near the field + along the XC triangle (TP1 / TP2 / legs)
     const spots = [
       { x: -80, z: -120, r: 35, strength: 5.5 },
       { x: 110, z: -200, r: 40, strength: 6.5 },
@@ -28,6 +29,13 @@ export class ThermalSystem {
       { x: 280, z: -150, r: 32, strength: 4.5 },
       { x: 20, z: -80, r: 28, strength: 4.0 },
       { x: -220, z: -350, r: 42, strength: 6.2 },
+      // XC corridor — stronger cores near turnpoints
+      { x: 400, z: -500, r: 48, strength: 8.0 },
+      { x: 320, z: -420, r: 36, strength: 6.5 },
+      { x: -450, z: -360, r: 46, strength: 7.8 },
+      { x: -360, z: -280, r: 38, strength: 6.8 },
+      { x: 80, z: -600, r: 40, strength: 6.0 },
+      { x: -80, z: -240, r: 34, strength: 5.8 },
     ];
 
     const edgeMat = new THREE.LineBasicMaterial({

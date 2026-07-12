@@ -26,6 +26,11 @@ const el = {
   landIas: document.getElementById('land-ias'),
   landCfg: document.getElementById('land-cfg'),
   landPapi: document.getElementById('land-papi'),
+  xcPanel: document.getElementById('xc-panel'),
+  xcTitle: document.getElementById('xc-title'),
+  xcDist: document.getElementById('xc-dist'),
+  xcBrg: document.getElementById('xc-brg'),
+  xcLegs: document.getElementById('xc-legs'),
   hud: document.getElementById('hud'),
   fps: document.getElementById('fps'),
   title: document.getElementById('title-screen'),
@@ -135,12 +140,16 @@ export function isResultHoldActive() {
 
 export function showLanding(physics, afterCrash = false) {
   el.crash.classList.remove('hidden');
-  // Prefer scored grade when landing scenario produced a debrief
-  const scored = scenarioRuntime.landScore;
+  // Prefer scored debrief (landing or XC); else physics quality
+  const scored = scenarioRuntime.landScore || scenarioRuntime.xcScore;
   const q = scored?.grade || physics.landingQuality;
-  el.crash.classList.toggle('is-crash', q === 'crash' || afterCrash);
+  el.crash.classList.toggle('is-crash', q === 'crash' || q === 'F' || afterCrash);
   if (el.crashTitle) {
-    if (scored && q !== 'crash') {
+    if (scored && scenarioRuntime.xcScore) {
+      el.crashTitle.textContent = scenarioRuntime.xcDone
+        ? `TASK · ${scored.total}`
+        : `XC · ${scored.total}`;
+    } else if (scored && q !== 'crash') {
       el.crashTitle.textContent = `LANDED · ${scored.total}`;
     } else {
       el.crashTitle.textContent = q === 'crash' ? 'CRASH' : 'LANDED';
@@ -151,8 +160,17 @@ export function showLanding(physics, afterCrash = false) {
     good: 'Nice landing! Soft as a feather.',
     rough: 'Rough landing — you walked away.',
     crash: 'Hard impact. The wing survives. Barely.',
+    A: 'Excellent cross-country flight.',
+    B: 'Solid triangle — good soaring.',
+    C: 'Partial task — keep working the lift.',
+    D: 'Short hop — try the thermals next time.',
+    F: 'Task incomplete.',
   };
-  el.crashMsg.textContent = msgs[q] || msgs.crash;
+  if (scored?.debrief?.length) {
+    el.crashMsg.textContent = scored.debrief.slice(0, 3).join(' ');
+  } else {
+    el.crashMsg.textContent = msgs[q] || msgs.crash;
+  }
   const mins = Math.floor(physics.flightTime / 60);
   const secs = Math.floor(physics.flightTime % 60);
   const roll =
@@ -295,13 +313,22 @@ export function updateHUD(physics, dt) {
     el.landPanel.classList.toggle('hidden', !onLand);
     if (onLand) {
       const dist = scenarioRuntime.landDist;
+      const phase = scenarioRuntime.landPhase || 'final';
+      const phaseLabel =
+        phase === 'base' ? 'BASE' : phase === 'over' ? 'OVER' : 'FINAL';
       const distLabel =
         dist > 50
           ? `${(dist / 1000).toFixed(2)} km`
           : dist > 0
             ? `${dist.toFixed(0)} m`
-            : 'OVER';
-      if (el.landTitle) el.landTitle.textContent = `FINAL · ${distLabel}`;
+            : 'THR';
+      const lat = Math.abs(scenarioRuntime.landAlign || 0);
+      if (el.landTitle) {
+        el.landTitle.textContent =
+          phase === 'base'
+            ? `${phaseLabel} · LAT ${lat.toFixed(0)} m`
+            : `${phaseLabel} · ${distLabel}`;
+      }
 
       const path = scenarioRuntime.landPath || 'on';
       el.landPanel.classList.toggle('path-high', path === 'high');
@@ -330,6 +357,43 @@ export function updateHUD(physics, dt) {
           lamp.classList.toggle('white', i < w);
           lamp.classList.toggle('red', i >= w);
         });
+      }
+    }
+  }
+
+  // Cross-country task panel
+  if (el.xcPanel) {
+    const onXc =
+      scenarioRuntime.xcActive &&
+      physics.alive &&
+      !physics.rolling &&
+      !physics.wingStrike;
+    el.xcPanel.classList.toggle('hidden', !onXc);
+    if (onXc) {
+      const done = scenarioRuntime.xcDone;
+      const legs = scenarioRuntime.xcLegs || 0;
+      if (el.xcTitle) {
+        el.xcTitle.textContent = done
+          ? 'TASK COMPLETE'
+          : `XC · LEG ${Math.min(legs + 1, 3)}/3`;
+      }
+      el.xcPanel.classList.toggle('done', !!done);
+      const dist = scenarioRuntime.xcDist || 0;
+      if (el.xcDist) {
+        el.xcDist.textContent =
+          dist >= 1000
+            ? `TP ${(dist / 1000).toFixed(2)} km`
+            : `TP ${dist.toFixed(0)} m`;
+      }
+      if (el.xcBrg) {
+        el.xcBrg.textContent = `BRG ${Math.round(scenarioRuntime.xcBearing || 0)}°`;
+      }
+      if (el.xcLegs) {
+        const labels = ['TP1', 'TP2', 'HOME'];
+        el.xcLegs.textContent = done
+          ? '▲ ▲ ▲'
+          : labels.map((n, i) => (i < legs ? '▲' : '·')).join(' ') +
+            (legs < 3 ? `  → ${labels[legs]}` : '');
       }
     }
   }

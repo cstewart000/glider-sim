@@ -6,7 +6,8 @@
 import * as THREE from 'three';
 import { fillMaterial } from './styleUtil.js';
 import { RUNWAY } from './runway.js';
-import { scenarioRuntime } from './scenarios.js';
+import { scenarioRuntime, XC_WAYPOINTS } from './scenarios.js';
+import { terrainHeight } from './terrain.js';
 
 let root = null;
 let towPlane = null;
@@ -16,6 +17,8 @@ let winchHouse = null;
 let papiGroup = null;
 /** @type {THREE.Mesh[]} */
 let papiLights = [];
+/** @type {THREE.Group | null} */
+let xcMarkers = null;
 
 const ROPE_SEGS = 10;
 const _sag = new THREE.Vector3();
@@ -72,7 +75,46 @@ export function initScenarioVisuals(scene) {
   papiGroup.visible = false;
   root.add(papiGroup);
 
+  // XC turnpoint markers (pylons + ring)
+  xcMarkers = buildXcMarkers();
+  xcMarkers.visible = false;
+  root.add(xcMarkers);
+
   return root;
+}
+
+function buildXcMarkers() {
+  const g = new THREE.Group();
+  g.name = 'xcMarkers';
+  const mat = fillMaterial({ color: 0xe8d48a });
+  const matActive = fillMaterial({ color: 0xf0c040 });
+  const matDone = fillMaterial({ color: 0x88c0a0 });
+
+  XC_WAYPOINTS.forEach((wp, i) => {
+    const y = terrainHeight(wp.x, wp.z);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.8, 28, 6), mat);
+    pole.position.set(wp.x, y + 14, wp.z);
+    g.add(pole);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(4, 8, 6), mat);
+    ball.position.set(wp.x, y + 30, wp.z);
+    g.add(ball);
+    // Ground ring (cylinder outline feel)
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(wp.r * 0.35, 1.2, 4, 24),
+      mat
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(wp.x, y + 1.5, wp.z);
+    g.add(ring);
+    pole.userData.wpIndex = i;
+    ball.userData.wpIndex = i;
+    ring.userData.wpIndex = i;
+    pole.userData.matIdle = mat;
+    pole.userData.matActive = matActive;
+    pole.userData.matDone = matDone;
+  });
+  g.userData.mats = { mat, matActive, matDone };
+  return g;
 }
 
 /** Four light boxes beside the approach threshold. */
@@ -185,6 +227,31 @@ export function setScenarioVisualMode(id) {
   cableLine.visible = false;
   towPlane.visible = false;
   if (papiGroup) papiGroup.visible = id === 'landing';
+  if (xcMarkers) {
+    xcMarkers.visible = id === 'crosscountry';
+    if (id === 'crosscountry') refreshXcMarkerHeights();
+  }
+}
+
+/** Place pylons on current airfield height model. */
+function refreshXcMarkerHeights() {
+  if (!xcMarkers) return;
+  const byIndex = new Map();
+  xcMarkers.traverse((o) => {
+    if (o.userData.wpIndex === undefined) return;
+    if (!byIndex.has(o.userData.wpIndex)) byIndex.set(o.userData.wpIndex, []);
+    byIndex.get(o.userData.wpIndex).push(o);
+  });
+  XC_WAYPOINTS.forEach((wp, i) => {
+    const y = terrainHeight(wp.x, wp.z);
+    const objs = byIndex.get(i) || [];
+    for (const o of objs) {
+      // poles, balls, rings — restore relative heights
+      if (o.geometry?.type === 'CylinderGeometry') o.position.set(wp.x, y + 14, wp.z);
+      else if (o.geometry?.type === 'SphereGeometry') o.position.set(wp.x, y + 30, wp.z);
+      else if (o.geometry?.type === 'TorusGeometry') o.position.set(wp.x, y + 1.5, wp.z);
+    }
+  });
 }
 
 /**
@@ -211,6 +278,24 @@ export function updateScenarioVisuals(id, physics, dt) {
     setPapiLights(scenarioRuntime.landPapiWhite ?? 2);
   } else if (papiGroup && id !== 'landing') {
     papiGroup.visible = false;
+  }
+
+  if (id === 'crosscountry' && xcMarkers) {
+    xcMarkers.visible = true;
+    const active = scenarioRuntime.xcDone
+      ? -1
+      : scenarioRuntime.xcWp;
+    const legs = scenarioRuntime.xcLegs || 0;
+    const { mat, matActive, matDone } = xcMarkers.userData.mats || {};
+    xcMarkers.traverse((o) => {
+      if (!o.isMesh || o.userData.wpIndex === undefined) return;
+      const i = o.userData.wpIndex;
+      if (i < legs) o.material = matDone || o.material;
+      else if (i === active) o.material = matActive || o.material;
+      else o.material = mat || o.material;
+    });
+  } else if (xcMarkers && id !== 'crosscountry') {
+    xcMarkers.visible = false;
   }
 
   if (id === 'tow' && scenarioRuntime.phase === 'tow' && !scenarioRuntime.released) {
