@@ -13,6 +13,9 @@ let towPlane = null;
 let towProp = null;
 let cableLine = null;
 let winchHouse = null;
+let papiGroup = null;
+/** @type {THREE.Mesh[]} */
+let papiLights = [];
 
 const ROPE_SEGS = 10;
 const _sag = new THREE.Vector3();
@@ -64,7 +67,54 @@ export function initScenarioVisuals(scene) {
   towPlane.visible = false;
   root.add(towPlane);
 
+  // PAPI (approach slope lights) — left of threshold
+  papiGroup = buildPapi();
+  papiGroup.visible = false;
+  root.add(papiGroup);
+
   return root;
+}
+
+/** Four light boxes beside the approach threshold. */
+function buildPapi() {
+  const g = new THREE.Group();
+  g.name = 'papi';
+  const thrZ = RUNWAY.z + RUNWAY.halfLength;
+  // Place left of strip, near threshold
+  const baseX = RUNWAY.x - RUNWAY.halfWidth - 8;
+  const baseY = RUNWAY.y + 0.6;
+  const baseZ = thrZ - 12;
+  papiLights = [];
+  for (let i = 0; i < 4; i++) {
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 0.7, 1.2),
+      fillMaterial({ color: 0x3a3a40 })
+    );
+    box.position.set(baseX, baseY, baseZ - i * 3.2);
+    g.add(box);
+    // Lit face toward approach (+Z)
+    const lamp = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.45, 0.15),
+      fillMaterial({ color: 0xf2f2f6 })
+    );
+    lamp.position.set(0, 0.05, 0.55);
+    box.add(lamp);
+    papiLights.push(lamp);
+  }
+  return g;
+}
+
+/** Update PAPI colors: whiteCount from left (0=all red … 4=all white). */
+export function setPapiLights(whiteCount) {
+  const w = Math.max(0, Math.min(4, whiteCount | 0));
+  for (let i = 0; i < papiLights.length; i++) {
+    const lamp = papiLights[i];
+    if (!lamp) continue;
+    // Lights ordered from threshold outward; left-to-right in approach view
+    // Convention: more white = higher → first w lamps white, rest red
+    const isWhite = i < w;
+    lamp.material.color.setHex(isWhite ? 0xf4f4f8 : 0xd03028);
+  }
 }
 
 function buildTowPlane() {
@@ -134,6 +184,7 @@ export function setScenarioVisualMode(id) {
   winchHouse.visible = id === 'cable';
   cableLine.visible = false;
   towPlane.visible = false;
+  if (papiGroup) papiGroup.visible = id === 'landing';
 }
 
 /**
@@ -153,6 +204,13 @@ export function updateScenarioVisuals(id, physics, dt) {
     setRopeColor(0.2);
     towPlane.visible = false;
     return;
+  }
+
+  if (id === 'landing' && scenarioRuntime.landingActive) {
+    if (papiGroup) papiGroup.visible = true;
+    setPapiLights(scenarioRuntime.landPapiWhite ?? 2);
+  } else if (papiGroup && id !== 'landing') {
+    papiGroup.visible = false;
   }
 
   if (id === 'tow' && scenarioRuntime.phase === 'tow' && !scenarioRuntime.released) {

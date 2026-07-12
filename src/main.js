@@ -25,7 +25,7 @@ import {
 import { flightAudio } from './flightAudio.js';
 import {
   SCENARIO_LIST, setActiveScenario, getActiveScenario, scenarioRuntime,
-  isLaunchAttached, releaseLaunch,
+  isLaunchAttached, releaseLaunch, scoreLanding,
 } from './scenarios.js';
 import {
   initScenarioVisuals, setScenarioVisualMode, updateScenarioVisuals,
@@ -48,13 +48,13 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = false;
-renderer.setClearColor(0xc8dcec); // match pale horizon blue
+renderer.setClearColor(0xeef2f5); // concept-art pale white horizon
 renderer.sortObjects = false; // transparent clouds already use renderOrder
 
 // —— Scene ——
 const scene = new THREE.Scene();
-// Soft distance fade into horizon band color
-scene.fog = new THREE.Fog(0xc5dae8, 550, 2200);
+// Dissolve into white paper — hides far LOD, matches concept sky
+scene.fog = new THREE.Fog(0xe8eef2, 420, 1950);
 
 // Pale blue sky dome — discrete shaded bands by elevation above horizon
 {
@@ -62,17 +62,17 @@ scene.fog = new THREE.Fog(0xc5dae8, 550, 2200);
   const skyGeo = new THREE.SphereGeometry(R, 32, 20);
   const pos = skyGeo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  // Elevation thresholds (0 = horizon, 1 = zenith) → pale → deeper blue
+  // Concept paper sky: white horizon → soft pale blue zenith
   const bands = [
-    { h: 0.0, c: new THREE.Color(0xdceaf6) },
-    { h: 0.1, c: new THREE.Color(0xcddff0) },
-    { h: 0.22, c: new THREE.Color(0xbcd2ea) },
-    { h: 0.38, c: new THREE.Color(0xabc6e2) },
-    { h: 0.55, c: new THREE.Color(0x9ab8d8) },
-    { h: 0.75, c: new THREE.Color(0x8aaed0) },
-    { h: 1.0, c: new THREE.Color(0x7aa2c8) },
+    { h: 0.0, c: new THREE.Color(0xf4f7fa) },
+    { h: 0.1, c: new THREE.Color(0xe8eef4) },
+    { h: 0.22, c: new THREE.Color(0xdce6f0) },
+    { h: 0.38, c: new THREE.Color(0xcedceb) },
+    { h: 0.55, c: new THREE.Color(0xc0d2e4) },
+    { h: 0.75, c: new THREE.Color(0xb4c8dc) },
+    { h: 1.0, c: new THREE.Color(0xa8bed4) },
   ];
-  const below = new THREE.Color(0xc5d4e2);
+  const below = new THREE.Color(0xe4eaf0);
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i);
     if (y < 0) {
@@ -274,17 +274,17 @@ function applyScenarioWorld(scenarioId, around) {
   ridgeVapor.setVisible(!isAirfield);
   if (!isAirfield) ridgeVapor.seedAround(pos);
 
-  // Slightly cooler, hazier horizon over open water
+  // Concept-art white fog; coastal slightly cooler
   if (profile === 'coastal') {
-    scene.fog.color.set(0xb8d0e4);
-    scene.fog.near = 480;
-    scene.fog.far = 2400;
-    renderer.setClearColor(0xb4cce0);
+    scene.fog.color.set(0xe2ebf2);
+    scene.fog.near = 400;
+    scene.fog.far = 2100;
+    renderer.setClearColor(0xe8eef4);
   } else {
-    scene.fog.color.set(0xc5dae8);
-    scene.fog.near = 550;
-    scene.fog.far = 2200;
-    renderer.setClearColor(0xc8dcec);
+    scene.fog.color.set(0xe8eef2);
+    scene.fog.near = 420;
+    scene.fog.far = 1950;
+    renderer.setClearColor(0xeef2f5);
   }
 }
 
@@ -628,7 +628,7 @@ function tick(_time, frame) {
       );
       // Winch / tow cable tension after free aero integrate
       const sc = getActiveScenario();
-      if (sc.update) sc.update(physics, FIXED_DT);
+      if (sc.update) sc.update(physics, FIXED_DT, controls);
       accumulator -= FIXED_DT;
       steps++;
     }
@@ -687,7 +687,20 @@ function tick(_time, frame) {
     updateScenarioVisuals(getActiveScenario().id, physics, frameDt);
 
     // Rolling ends when stopped → 3s hold then menu
-    if (!physics.alive) endFlight();
+    if (!physics.alive) {
+      // Finalize landing score before leaving the sim loop
+      if (
+        scenarioRuntime.landingActive &&
+        !scenarioRuntime.landScored
+      ) {
+        scenarioRuntime.landScore = scoreLanding(physics);
+        scenarioRuntime.landScored = true;
+        if (scenarioRuntime.landScore?.grade) {
+          physics.landingQuality = scenarioRuntime.landScore.grade;
+        }
+      }
+      endFlight();
+    }
   } else {
     flightAudio.update(frameDt, null);
   }

@@ -24,14 +24,15 @@
                 <stop offset="100%" stop-color="#e8e8ee"/>
               </linearGradient>
             </defs>
-            <rect x="0" y="200" width="800" height="300" fill="url(#fade)"/>
-            <path d="M 40 500 L 90 380 C 140 300, 220 255, 400 240 C 580 255, 660 300, 710 380 L 760 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="2" stroke-linejoin="round"/>
-            <path d="M 110 500 L 145 395 C 200 320, 270 290, 400 278 C 530 290, 600 320, 655 395 L 690 500" fill="none" stroke="#2c2c32" stroke-width="1.35" opacity="0.85"/>
-            <path d="M 220 500 L 250 350" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.3"/>
-            <path d="M 580 500 L 550 350" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.3"/>
-            <path d="M 400 278 L 400 500" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.22"/>
-            <path d="M 300 365 C 340 335, 460 335, 500 365 L 485 410 C 445 425, 355 425, 315 410 Z" fill="#f2f2f6" stroke="#2c2c32" stroke-width="1.5" stroke-linejoin="round"/>
-            <path d="M 330 380 C 365 360, 435 360, 470 380" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.4"/>
+            <!-- Soft vignette only — 3D cockpit carries concept structure -->
+            <rect x="0" y="260" width="800" height="240" fill="url(#fade)"/>
+            <!-- Wing-root hints L/R (concept art coaming) -->
+            <path d="M 0 500 L 0 390 L 180 320 L 220 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.5" opacity="0.55"/>
+            <path d="M 800 500 L 800 390 L 620 320 L 580 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.5" opacity="0.55"/>
+            <!-- Center nose spine silhouette -->
+            <path d="M 340 500 L 360 360 L 400 280 L 440 360 L 460 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="1.4" opacity="0.5"/>
+            <path d="M 380 500 L 390 400 L 400 340 L 410 400 L 420 500 Z" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+            <path d="M 400 280 L 400 500" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.2"/>
             <!-- Airbrake lever -->
             <g id="cockpit-brake" transform="translate(250, 430)">
               <rect x="-8" y="-52" width="16" height="56" rx="3" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1.2"/>
@@ -161,6 +162,19 @@
             <div id="tow-tension-bar"><div id="tow-tension-fill"></div></div>
           </div>
           <div id="tow-hint" class="hidden">R · RELEASE</div>
+        </div>
+        <!-- Landing approach -->
+        <div id="landing-panel" class="hidden" aria-live="polite">
+          <div id="land-title">FINAL</div>
+          <div id="land-path">PATH · ON</div>
+          <div id="land-ias">IAS · OK</div>
+          <div id="land-cfg">GEAR DN</div>
+          <div id="land-papi" title="PAPI glide path">
+            <span class="papi-lamp"></span>
+            <span class="papi-lamp"></span>
+            <span class="papi-lamp"></span>
+            <span class="papi-lamp"></span>
+          </div>
         </div>
         <div id="fps"></div>
       </div>

@@ -318,6 +318,65 @@ html, body, #app {
 }
 #tow-hint.hidden { display: none; }
 
+/* Landing approach panel */
+#landing-panel {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 210px;
+  padding: 10px 16px 12px;
+  border: 1.5px solid rgba(80, 180, 200, 0.55);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  text-align: center;
+  pointer-events: none;
+  z-index: 6;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #2a5a68;
+}
+#landing-panel.hidden { display: none; }
+#landing-panel.path-high { border-color: rgba(200, 160, 40, 0.8); }
+#landing-panel.path-low { border-color: rgba(200, 80, 60, 0.85); }
+#land-title {
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  margin-bottom: 4px;
+  color: #1a4a58;
+}
+#land-path, #land-ias, #land-cfg {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #3a6070;
+}
+#land-path.bad, #land-ias.bad, #land-cfg.bad {
+  color: #a03828;
+}
+#land-papi {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.papi-lamp {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(40, 40, 48, 0.35);
+  background: #f0f0f4;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+}
+.papi-lamp.red {
+  background: #d03028;
+  box-shadow: 0 0 8px rgba(200, 40, 30, 0.55);
+}
+.papi-lamp.white {
+  background: #f6f6fa;
+  box-shadow: 0 0 8px rgba(220, 230, 240, 0.7);
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 0.8; }
   50% { opacity: 1; }

@@ -61,6 +61,66 @@ function fbm(x, z, octaves = 4) {
   return v / s;
 }
 
+/**
+ * Ridged multifractal — sharp crest chains (concept-art crystalline ridges).
+ * Returns ~0..1 with highs along knife-edge spines.
+ */
+function ridgedFbm(x, z, octaves = 4) {
+  let v = 0;
+  let a = 1;
+  let f = 1;
+  let s = 0;
+  let weight = 1;
+  for (let i = 0; i < octaves; i++) {
+    let n = smoothNoise(x * f, z * f);
+    n = 1 - Math.abs(n * 2 - 1); // ridge
+    n *= n;
+    n *= weight;
+    v += n * a;
+    s += a;
+    weight = clamp01(n * 1.35);
+    a *= 0.5;
+    f *= 2.05;
+  }
+  return s > 0 ? v / s : 0;
+}
+
+/**
+ * Sparse crystalline peaks on a coarse grid (skyline spikes).
+ * Cheap max-of-neighbors; sharp power falloff reads as drawn facets.
+ */
+function peakCluster(x, z, cell = 400, hScale = 1) {
+  const ix = Math.floor(x / cell);
+  const iz = Math.floor(z / cell);
+  let h = 0;
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = ix + dx;
+      const cz = iz + dz;
+      const jx = hash2(cx * 1.71, cz * 2.37);
+      const jz = hash2(cx * 3.13, cz * 0.91);
+      // Skip some cells so peaks aren't a regular grid
+      if (hash2(cx + 4.2, cz + 8.1) < 0.38) continue;
+      const px = (cx + 0.18 + jx * 0.64) * cell;
+      const pz = (cz + 0.18 + jz * 0.64) * cell;
+      const ph = (55 + hash2(cx, cz + 9.4) * 240) * hScale;
+      const sharp = 1.5 + hash2(cx + 2.1, cz) * 1.4;
+      const rad = 70 + ph * 0.32;
+      const d = Math.hypot(x - px, z - pz);
+      if (d >= rad) continue;
+      const t = 1 - d / rad;
+      h = Math.max(h, ph * Math.pow(t, sharp));
+    }
+  }
+  return h;
+}
+
+/** High in valleys / low on ridges — for forest placement and height carve. */
+function valleyTerm(x, z) {
+  const r = ridgedFbm(x * 0.0021 + 3.1, z * 0.0021 + 1.4, 3);
+  return Math.pow(1 - r, 1.45);
+}
+
 function clamp01(t) {
   return t < 0 ? 0 : t > 1 ? 1 : t;
 }
@@ -89,32 +149,40 @@ export function setTerrainProfile(id) {
 // —— Height models ——
 
 /**
- * Level field around the runway; large hills ring the horizon.
+ * Level field around the runway; crystalline ranges ring the horizon
+ * (concept art: sharp peaks, ridgelines, carved valleys).
  */
 function heightAirfield(x, z) {
   const dx = x - RW_X;
   const dz = z - RW_Z;
   const r = Math.hypot(dx, dz);
 
-  // Soft field undulation (almost level)
-  let h = RW_Y - 2 + fbm(x * 0.0055, z * 0.0055, 3) * 10;
-  h += fbm(x * 0.018 + 4, z * 0.018, 2) * 3.5;
+  // Soft field undulation (almost level) — open white country near strip
+  let h = RW_Y - 2 + fbm(x * 0.0055, z * 0.0055, 3) * 8;
+  h += fbm(x * 0.018 + 4, z * 0.018, 2) * 2.8;
 
   // Broad plateau so the strip sits in open country
   const plateau = Math.exp(-(r * r) / (520 * 520));
   h = h * (1 - plateau * 0.55) + RW_Y * plateau * 0.55 + h * plateau * 0.2;
 
-  // Mid ring: gentle rises
+  // Mid ring: crumpled ridged rises + watershed valleys (concept mid-ground)
   const midRing = smoothstep(280, 620, r) * (1 - smoothstep(900, 1400, r));
-  h += midRing * (18 + fbm(x * 0.0035 + 1.2, z * 0.0035, 3) * 45);
+  const midRidge = ridgedFbm(x * 0.0038 + 1.2, z * 0.0038, 4);
+  const midDetail = fbm(x * 0.011 + 2, z * 0.011, 2);
+  h += midRing * (10 + midRidge * 62 + midDetail * 18);
+  h -= midRing * valleyTerm(x, z) * 26;
 
-  // Distant large hills / ranges (surrounding the field)
-  const far = smoothstep(550, 1100, r);
-  const range = fbm(x * 0.0018 + 7, z * 0.0018 + 3, 4);
-  h += far * (55 + range * 210);
-  // Occasional higher peaks on the skyline
-  if (range > 0.58 && r > 700) {
-    h += (range - 0.58) * 180 * far;
+  // Distant crystalline skyline — ridge chains + sparse spikes
+  const far = smoothstep(520, 1050, r);
+  const range = ridgedFbm(x * 0.00155 + 7, z * 0.00155 + 3, 5);
+  const warp = (fbm(x * 0.0012, z * 0.0012 + 5, 2) - 0.5) * 180;
+  const range2 = ridgedFbm(x * 0.0021 + warp * 0.01, z * 0.0021, 3);
+  const peaks = peakCluster(x, z, 430, 1);
+  h += far * (40 + range * 165 + range2 * 55 + peaks * 0.92);
+  // Extra needle peaks on the outer ring
+  if (r > 750) {
+    const spike = peakCluster(x * 1.15 + 90, z * 1.15 - 40, 520, 0.7);
+    h += far * spike * 0.55 * smoothstep(750, 1100, r);
   }
 
   // Flatten home runway + wide apron so LOD chunks cannot bury the strip
@@ -134,6 +202,29 @@ function heightAirfield(x, z) {
     const t = Math.max(tx, tz);
     const w = (1 - t) * (1 - t);
     h = h * (1 - w) + (RW_Y - 0.12) * w;
+  }
+
+  // Long final corridor (+Z past threshold only): chop hills under the 3° path.
+  // Never runs on the hard runway deck (would sink the strip).
+  const thrZ = RW_Z + RW_HL;
+  const apprLen = 500;
+  const apprHalfW = 58;
+  if (!hard && z > thrZ && z < thrZ + apprLen && adx < apprHalfW) {
+    const tz = clamp01((z - thrZ) / apprLen);
+    const tx = adx / apprHalfW;
+    // Strong near threshold / centerline; still meaningful near landing spawn
+    const along = 1 - tz * tz * (0.35 + 0.65 * tz);
+    const w = along * (1 - tx) * (1 - tx);
+    // Field-level target with gentle rise — always ≤ path − margin, ≥ deck
+    const pathClear =
+      RW_Y + (z - thrZ) * Math.tan((3 * Math.PI) / 180) - 16;
+    const target = Math.max(
+      RW_Y - 0.12,
+      Math.min(pathClear, RW_Y - 0.12 + tz * 12)
+    );
+    if (h > target) {
+      h = h * (1 - w) + target * w;
+    }
   }
 
   return h;
@@ -245,11 +336,6 @@ function heightCoastal(x, z) {
 
   // Flat coastal plain under the ridge (minimal noise so face angle stays true)
   let base = SEA_LEVEL + 12 + fbm(x * 0.01, z * 0.01, 2) * 3;
-  // Gentle foothills inland only (low, not another mountain range)
-  if (z < crestZ) {
-    const inland = fbm(x * 0.003 + 11, z * 0.003, 2);
-    base += inland * 10 * smoothstep(crestZ, crestZ - 200, z);
-  }
 
   const faceH =
     distCrest >= 0
@@ -257,6 +343,18 @@ function heightCoastal(x, z) {
       : ridgeFaceElev(distCrest, ridgeH, leeDeg);
 
   let h = base + faceH;
+
+  // Inland alpine mass (lee of soaring ridge) — concept-art crumpled ranges
+  if (z < crestZ) {
+    const inland = smoothstep(crestZ + 5, crestZ - 520, z);
+    const foothill = smoothstep(crestZ, crestZ - 160, z);
+    const ridges = ridgedFbm(x * 0.0032 + 11, z * 0.0032, 4);
+    const detail = fbm(x * 0.012 + 3, z * 0.012, 2);
+    const peaks = peakCluster(x + 40, z - 80, 380, 0.55);
+    h += foothill * (8 + ridges * 22 + detail * 8);
+    h += inland * (ridges * 78 + detail * 20 + peaks * 0.75);
+    h -= inland * valleyTerm(x * 0.95, z * 0.95) * 22;
+  }
 
   // Pale sandy strip: irregular terrace along meandering waterline
   const sandIn = coastZ - sandW;
@@ -309,6 +407,50 @@ function heightCoastal(x, z) {
 
 export function terrainHeight(x, z) {
   return activeProfile === 'coastal' ? heightCoastal(x, z) : heightAirfield(x, z);
+}
+
+/**
+ * Concept-art forest mass 0..1 — dark stippled valleys / mid slopes.
+ * Used for vertex greys; sparse tree props only where high.
+ */
+export function forestMask(x, z, y = null) {
+  const elev = y == null ? terrainHeight(x, z) : y;
+
+  if (activeProfile === 'coastal') {
+    const crest = coastalCrestZ(x);
+    // Stay off open windward face, beach, high rock
+    if (z > crest + 8) return 0;
+    if (elev < SEA_LEVEL + 14 || elev > SEA_LEVEL + 100) return 0;
+    const n = fbm(x * 0.0075 + 2.4, z * 0.0075, 3);
+    const clump = fbm(x * 0.018 + 5, z * 0.018, 2);
+    const lee = smoothstep(crest + 6, crest - 100, z);
+    const elevBand =
+      smoothstep(SEA_LEVEL + 14, SEA_LEVEL + 28, elev) *
+      (1 - smoothstep(SEA_LEVEL + 72, SEA_LEVEL + 100, elev));
+    const valley = valleyTerm(x, z);
+    return clamp01(
+      lee * elevBand * smoothstep(0.38, 0.68, n + valley * 0.22) * (0.55 + clump * 0.55)
+    );
+  }
+
+  // Airfield: keep field open; dark forest pockets in mid valleys
+  const adx = Math.abs(x - RW_X);
+  const adz = Math.abs(z - RW_Z);
+  if (adx < RW_HW + 40 && adz < RW_HL + 50) return 0;
+  const r = Math.hypot(x - RW_X, z - RW_Z);
+  if (r < 220) return 0;
+
+  const n = fbm(x * 0.0068 + 1.7, z * 0.0068, 3);
+  const clump = fbm(x * 0.016 + 4, z * 0.016, 2);
+  const elevBand = smoothstep(58, 78, elev) * (1 - smoothstep(118, 155, elev));
+  const valley = valleyTerm(x, z);
+  const ring = smoothstep(220, 420, r) * (1 - smoothstep(1400, 1900, r) * 0.5);
+  return clamp01(
+    ring *
+      elevBand *
+      smoothstep(0.4, 0.7, n + valley * 0.28) *
+      (0.5 + clump * 0.6)
+  );
 }
 
 /** Ridge face parameters at x — shared by lift sampling and vapor streams. */
@@ -417,10 +559,9 @@ function lodForRing(ring) {
 
 const LOD_RANK = { far: 0, mid: 1, near: 2 };
 
-const trunkGeo = new THREE.CylinderGeometry(0.12, 0.2, 1.0, 4);
-const crownGeo = new THREE.ConeGeometry(0.95, 2.2, 4);
-const trunkMat = fillMaterial({ color: 0xb8b8bc });
-const crownMat = fillMaterial({ color: 0x6a6a70 });
+// Low-poly canopy blobs (sparse props; forest mass is vertex colour)
+const crownGeo = new THREE.ConeGeometry(1.1, 1.8, 5);
+const crownMat = fillMaterial({ color: 0x5a5a60 });
 // Concept-art water: cool pale blue-grey
 const waterMat = fillMaterial({
   color: 0xa8c0d4,
@@ -440,82 +581,195 @@ const sandMat = fillMaterial({
 });
 
 function vertexColor(x, z, y, lod) {
+  // —— Coastal specials (sand / wet / high rock) ——
   if (activeProfile === 'coastal') {
     const coastZ = coastalCoastZ(x, z);
     const sandW = coastalSandWidth(x);
     const sandIn = coastZ - sandW;
-    // Pale sand band — follows meander + variable width
     if (z > sandIn - 12 && z < coastZ + 14 && y < SEA_LEVEL + 16) {
       const edge =
         smoothstep(sandIn - 12, sandIn + 5, z) *
         (1 - smoothstep(coastZ - 4, coastZ + 14, z));
       const n = lod === 'far' ? 0.5 : fbm(x * 0.05, z * 0.05, 2);
-      // Warm pale sand with slight colour variation along shore
       const tint = fbm(x * 0.01 + 2, 1.4, 2);
-      const r = 0.92 + n * 0.05 + tint * 0.02;
-      const g = 0.88 + n * 0.03 + tint * 0.01;
-      const b = 0.76 + n * 0.04 - tint * 0.02;
+      const r = 0.94 + n * 0.04 + tint * 0.02;
+      const g = 0.9 + n * 0.03 + tint * 0.01;
+      const b = 0.78 + n * 0.03 - tint * 0.02;
       if (edge > 0.12) {
         const wet = smoothstep(coastZ - 12 - sandW * 0.1, coastZ + 5, z);
         return {
-          r: r * (1 - wet * 0.1) * (0.72 + edge * 0.28),
-          g: g * (1 - wet * 0.06) * (0.72 + edge * 0.28),
-          b: (b + wet * 0.05) * (0.72 + edge * 0.28),
+          r: r * (1 - wet * 0.08) * (0.78 + edge * 0.22),
+          g: g * (1 - wet * 0.05) * (0.78 + edge * 0.22),
+          b: (b + wet * 0.04) * (0.78 + edge * 0.22),
         };
       }
     }
     if (y <= SEA_LEVEL + 1.2) {
-      // Intertidal / wet shore
       const n = fbm(x * 0.04, z * 0.04, 2);
-      return { r: 0.82 + n * 0.04, g: 0.8 + n * 0.03, b: 0.74 + n * 0.03 };
-    }
-    if (y > SEA_LEVEL + 95) {
-      // Higher ridge rock
-      const n = lod === 'far' ? 0.5 : fbm(x * 0.02, z * 0.02, 2);
-      const g = 0.9 + n * 0.04;
-      return { r: g, g: g, b: g * 0.99 };
-    }
-    if (y > SEA_LEVEL + 45) {
-      const n = lod === 'far' ? 0.5 : fbm(x * 0.02, z * 0.02, 2);
-      const g = 0.84 + n * 0.06;
-      return { r: g, g: g, b: g * 0.98 };
+      return { r: 0.86 + n * 0.03, g: 0.84 + n * 0.03, b: 0.78 + n * 0.03 };
     }
   }
 
-  // Airfield: grey asphalt pad under / around the strip (visible even without mesh)
+  // —— Airfield asphalt (must stay readable) ——
   if (activeProfile === 'airfield') {
     const adx = Math.abs(x - RW_X);
     const adz = Math.abs(z - RW_Z);
     if (adx <= RW_HW + 2 && adz <= RW_HL + 2) {
-      // Medium grey runway surface
       const n = lod === 'far' ? 0.5 : fbm(x * 0.08, z * 0.08, 2);
       const g = 0.42 + n * 0.04;
       return { r: g, g: g, b: g * 1.02 };
     }
     if (adx <= RW_HW + 18 && adz <= RW_HL + 22) {
-      // Lighter grey apron / shoulders
       const n = lod === 'far' ? 0.5 : fbm(x * 0.05, z * 0.05, 2);
       const g = 0.58 + n * 0.05;
       return { r: g, g: g * 0.99, b: g * 0.97 };
     }
   }
 
-  // Default greyscale land
-  let g;
-  if (lod === 'far') {
-    g = 0.82 + Math.min(0.12, y * 0.0004);
-  } else {
-    const n = fbm(x * 0.02, z * 0.02, lod === 'far' ? 2 : 3);
-    g = 0.88 - n * 0.08;
-    if (y > 160) g = 0.94;
-    else if (y > 120) g = 0.86 + n * 0.04;
-    else if (y < 55) g = 0.78 + n * 0.05;
-    if (y > 55 && y < 130 && n > 0.55) g -= 0.18;
+  // —— Concept base: near-white fill; interest is lines + forest mass ——
+  const n = lod === 'far' ? 0.45 : fbm(x * 0.018, z * 0.018, 2);
+  let g = 0.94 - n * 0.035; // bright white-grey field
+
+  // High rock / snowcap slightly brighter
+  if (y > 160) g = 0.97 - n * 0.02;
+  else if (y > 120) g = 0.95 - n * 0.025;
+  // Rock face band: tiny cool shift so slopes read under lines
+  if (y > 90 && y < 200) {
+    const rock = smoothstep(90, 130, y) * (1 - smoothstep(170, 210, y));
+    g -= rock * 0.03 * (0.4 + n);
   }
-  return { r: g, g, b: g };
+
+  // Dark forest stipple mass (concept valleys)
+  const forest =
+    lod === 'far'
+      ? forestMask(x, z, y) * 0.65
+      : forestMask(x, z, y);
+  if (forest > 0.05) {
+    // Stipple variation so patches aren't flat ink
+    const stipple =
+      lod === 'far' ? 0.5 : fbm(x * 0.09 + 3, z * 0.09, 2);
+    const dark = forest * (0.22 + stipple * 0.12);
+    g = Math.max(0.42, g - dark);
+  }
+
+  // Coastal high ridge: slightly cooler pale rock
+  if (activeProfile === 'coastal' && y > SEA_LEVEL + 70) {
+    const high = smoothstep(SEA_LEVEL + 70, SEA_LEVEL + 110, y);
+    g = g * (1 - high * 0.08) + 0.96 * high;
+  }
+
+  return { r: g, g: g, b: g * 0.995 };
 }
 
-function buildChunkMesh(cx, cz, mat, edgeMat, ring) {
+/**
+ * Topographic isolines from a displaced grid PlaneGeometry.
+ * Cheap concept-art contour hatching (near/mid only).
+ */
+function addIsolines(group, geo, segs, ox, oz, lod, lineMat) {
+  const pos = geo.attributes.position;
+  const cols = segs + 1;
+  const rows = segs + 1;
+  const interval = lod === 'near' ? 26 : 40;
+  const positions = [];
+
+  function crossPoint(iA, iB, level) {
+    const yA = pos.getY(iA);
+    const yB = pos.getY(iB);
+    const t = (level - yA) / (yB - yA);
+    return {
+      x: pos.getX(iA) + (pos.getX(iB) - pos.getX(iA)) * t,
+      y: level + 0.45,
+      z: pos.getZ(iA) + (pos.getZ(iB) - pos.getZ(iA)) * t,
+    };
+  }
+
+  for (let j = 0; j < rows - 1; j++) {
+    for (let i = 0; i < cols - 1; i++) {
+      const i00 = j * cols + i;
+      const i10 = i00 + 1;
+      const i01 = i00 + cols;
+      const i11 = i01 + 1;
+      const y00 = pos.getY(i00);
+      const y10 = pos.getY(i10);
+      const y11 = pos.getY(i11);
+      const y01 = pos.getY(i01);
+      const minY = Math.min(y00, y10, y11, y01);
+      const maxY = Math.max(y00, y10, y11, y01);
+      let level = Math.ceil((minY + 0.05) / interval) * interval;
+      for (; level < maxY; level += interval) {
+        const pts = [];
+        const edges = [
+          [i00, i10],
+          [i10, i11],
+          [i11, i01],
+          [i01, i00],
+        ];
+        for (let e = 0; e < 4; e++) {
+          const a = edges[e][0];
+          const b = edges[e][1];
+          const ya = pos.getY(a);
+          const yb = pos.getY(b);
+          if ((ya < level && yb >= level) || (yb < level && ya >= level)) {
+            pts.push(crossPoint(a, b, level));
+          }
+        }
+        if (pts.length === 2) {
+          positions.push(
+            pts[0].x,
+            pts[0].y,
+            pts[0].z,
+            pts[1].x,
+            pts[1].y,
+            pts[1].z
+          );
+        } else if (pts.length === 4) {
+          positions.push(
+            pts[0].x,
+            pts[0].y,
+            pts[0].z,
+            pts[1].x,
+            pts[1].y,
+            pts[1].z,
+            pts[2].x,
+            pts[2].y,
+            pts[2].z,
+            pts[3].x,
+            pts[3].y,
+            pts[3].z
+          );
+        }
+      }
+    }
+  }
+
+  if (positions.length < 6) return;
+
+  // Cap mid-LOD line budget
+  let buf = positions;
+  if (lod === 'mid' && positions.length > 9000) {
+    buf = [];
+    for (let i = 0; i < positions.length; i += 12) {
+      buf.push(
+        positions[i],
+        positions[i + 1],
+        positions[i + 2],
+        positions[i + 3],
+        positions[i + 4],
+        positions[i + 5]
+      );
+    }
+  }
+
+  const lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(buf, 3));
+  const lines = new THREE.LineSegments(lineGeo, lineMat);
+  lines.position.set(ox, 0, oz);
+  lines.frustumCulled = true;
+  lines.renderOrder = 1;
+  group.add(lines);
+}
+
+function buildChunkMesh(cx, cz, mat, edgeMatNear, edgeMatMid, isoMat, ring) {
   const lod = lodForRing(ring);
   const segs = lod === 'near' ? SEG_NEAR : lod === 'mid' ? SEG_MID : SEG_FAR;
 
@@ -562,12 +816,23 @@ function buildChunkMesh(cx, cz, mat, edgeMat, ring) {
   mesh.frustumCulled = true;
   group.add(mesh);
 
+  // Feature edges: dense near (concept slope hatching), soft mid, none far
   if (lod === 'near') {
-    const edges = new THREE.EdgesGeometry(geo, 15);
-    const outline = new THREE.LineSegments(edges, edgeMat);
+    const edges = new THREE.EdgesGeometry(geo, 10);
+    const outline = new THREE.LineSegments(edges, edgeMatNear);
     outline.position.copy(mesh.position);
     outline.frustumCulled = true;
+    outline.renderOrder = 1;
     group.add(outline);
+    addIsolines(group, geo, segs, ox, oz, lod, isoMat);
+  } else if (lod === 'mid') {
+    const edges = new THREE.EdgesGeometry(geo, 16);
+    const outline = new THREE.LineSegments(edges, edgeMatMid);
+    outline.position.copy(mesh.position);
+    outline.frustumCulled = true;
+    outline.renderOrder = 1;
+    group.add(outline);
+    addIsolines(group, geo, segs, ox, oz, lod, isoMat);
   }
 
   // Local ponds (airfield) or coastal water patches
@@ -592,10 +857,11 @@ function buildChunkMesh(cx, cz, mat, edgeMat, ring) {
     maybeAddSandStrip(group, originX, originZ, lod);
   }
 
+  // Sparse tree props only in strong forest mask (mass is vertex grey)
   if (lod === 'near') {
     addChunkTrees(group, originX, originZ, 1);
   } else if (lod === 'mid') {
-    addChunkTrees(group, originX, originZ, 0.35);
+    addChunkTrees(group, originX, originZ, 0.2);
   }
 
   return group;
@@ -659,40 +925,30 @@ function maybeAddSandStrip(group, originX, originZ, lod) {
 }
 
 function addChunkTrees(group, originX, originZ, densityScale) {
+  // Sparse props only — forest mass is vertex grey (concept stipple)
   const seed = Math.abs(Math.sin(originX * 12.9898 + originZ * 78.233) * 43758.5453);
-  const count = Math.floor((4 + (seed % 1) * 10) * densityScale);
-  if (count <= 0) return;
+  const attempts = Math.floor((6 + (seed % 1) * 8) * densityScale);
+  if (attempts <= 0) return;
   const rng = mulberry32(((originX * 73856093) ^ (originZ * 19349663)) >>> 0);
+  let placed = 0;
+  const maxPlace = Math.max(1, Math.floor(3 * densityScale));
 
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < attempts && placed < maxPlace; i++) {
     const x = originX + rng() * CHUNK_SIZE;
     const z = originZ + rng() * CHUNK_SIZE;
     const y = terrainHeight(x, z);
-    if (activeProfile === 'coastal') {
-      if (y < SEA_LEVEL + 14 || y > SEA_LEVEL + 100) continue;
-      // Skip open windward face / beach (trees on lee + lower slopes)
-      if (z > coastalCrestZ(x) + 15) continue;
-    } else {
-      if (y < 70 || y > 145) continue;
-      if (Math.abs(x - RW_X) < RW_HW + 8 && Math.abs(z - RW_Z) < RW_HL + 10) continue;
-    }
+    const fm = forestMask(x, z, y);
+    if (fm < 0.48) continue;
 
-    const s = 0.75 + rng() * 1.2;
+    // Darker low-poly “canopy blob” — reads as stipple when clustered
+    const s = 1.1 + rng() * 1.6;
     const crown = new THREE.Mesh(crownGeo, crownMat);
-    crown.position.set(x, y + 1.2 * s, z);
-    crown.scale.setScalar(s);
+    crown.position.set(x, y + 0.9 * s, z);
+    crown.scale.set(s * 1.15, s * 0.85, s * 1.15);
     crown.rotation.y = rng() * Math.PI * 2;
     crown.frustumCulled = true;
     group.add(crown);
-
-    if (densityScale > 0.6) {
-      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-      trunk.position.set(x, y + 0.5 * s, z);
-      trunk.scale.setScalar(s);
-      trunk.rotation.y = crown.rotation.y;
-      trunk.frustumCulled = true;
-      group.add(trunk);
-    }
+    placed++;
   }
 }
 
@@ -750,10 +1006,24 @@ export class TerrainWorld {
       vertexColors: true,
       side: THREE.FrontSide,
     });
-    this.edgeMat = new THREE.LineBasicMaterial({
-      color: 0x2c2c30,
+    // Near: inked concept contours; mid: softer; isolines shared soft grey
+    this.edgeMatNear = new THREE.LineBasicMaterial({
+      color: 0x2a2a2e,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.72,
+      depthWrite: false,
+    });
+    this.edgeMatMid = new THREE.LineBasicMaterial({
+      color: 0x3a3a40,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+    });
+    this.isoMat = new THREE.LineBasicMaterial({
+      color: 0x34343a,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
     });
 
     this.update(new THREE.Vector3(0, 100, 0), true);
@@ -829,7 +1099,15 @@ export class TerrainWorld {
       this._disposeChunk(key, existing);
     }
 
-    const chunk = buildChunkMesh(scx, scz, this.mat, this.edgeMat, ring);
+    const chunk = buildChunkMesh(
+      scx,
+      scz,
+      this.mat,
+      this.edgeMatNear,
+      this.edgeMatMid,
+      this.isoMat,
+      ring
+    );
     chunk.userData.lod = desired;
     this.root.add(chunk);
     this.chunks.set(key, chunk);

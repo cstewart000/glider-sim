@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { RUNWAY } from './runway.js';
-import { terrainHeight } from './terrain.js';
+import { terrainHeight, ridgeFaceInfo } from './terrain.js';
 import { flightAudio } from './flightAudio.js';
 
 /** @typedef {{ id: string, name: string, blurb: string, gear: number, spawn: Function, update?: Function, setupVisuals?: Function }} Scenario */
@@ -48,7 +48,280 @@ export const scenarioRuntime = {
   stationLat: 0,
   releaseReady: false,
   weakLinkWarn: false,
+  // —— Landing approach / score ——
+  landingActive: false,
+  /** Horizontal distance to threshold (m) */
+  landDist: 0,
+  /** Height above runway elevation (m) */
+  landAgl: 0,
+  /** 'on' | 'high' | 'low' */
+  landPath: 'on',
+  /** meters above/below 3° path (+ = high) */
+  landPathErr: 0,
+  /** 'ok' | 'high' | 'low' approach IAS band */
+  landIas: 'ok',
+  /** lateral offset from centerline (m), + = right */
+  landAlign: 0,
+  landGearOk: true,
+  /** 0–4 style PAPI (2 = on path): number of white lights from left */
+  landPapiWhite: 2,
+  landScored: false,
+  /** @type {null | { total: number, grade: string, debrief: string[], detail: object }} */
+  landScore: null,
+  /** Track if brakes used on final */
+  landBrakesUsed: false,
+  landWasRolling: false,
+  /** Sink rate at first touchdown (m/s, positive down) */
+  landTouchSink: 0,
+  landTouchSpd: 0,
+  landTouchZ: 0,
+  landTouchX: 0,
 };
+
+/** Approach threshold (near +Z end); landings fly toward −Z. */
+export function runwayThresholdZ() {
+  return RUNWAY.z + RUNWAY.halfLength;
+}
+
+/** 3° glide path height above runway at distance d from threshold (m). */
+export function glidePathHeight(distToThreshold) {
+  return Math.max(0, distToThreshold) * Math.tan((3 * Math.PI) / 180);
+}
+
+/**
+ * Update approach metrics for landing scenario.
+ * @param {import('./physics.js').GliderPhysics} physics
+ * @param {{ brakes?: number, gear?: number }} ctrl
+ */
+function updateLandingApproach(physics, ctrl) {
+  const thrZ = runwayThresholdZ();
+  const x = physics.position.x;
+  const z = physics.position.z;
+  const y = physics.position.y;
+
+  // Distance along approach: how far past threshold toward approach end (+Z)
+  const dist = z - thrZ; // >0 still on final; <0 past threshold
+  scenarioRuntime.landDist = dist;
+  scenarioRuntime.landAgl = y - RUNWAY.y;
+  scenarioRuntime.landAlign = x - RUNWAY.x;
+
+  // Ideal height on 3° path (only meaningful before/over threshold)
+  const pathDist = Math.max(0, dist);
+  const idealAgl = glidePathHeight(pathDist);
+  const pathErr = scenarioRuntime.landAgl - idealAgl;
+  scenarioRuntime.landPathErr = pathErr;
+
+  // Path band grows slightly with distance
+  const band = 8 + pathDist * 0.02;
+  if (pathErr > band) scenarioRuntime.landPath = 'high';
+  else if (pathErr < -band) scenarioRuntime.landPath = 'low';
+  else scenarioRuntime.landPath = 'on';
+
+  // PAPI: 4 lights — more white = higher (classic)
+  // err large positive → all white; large negative → all red
+  if (pathErr > band * 1.4) scenarioRuntime.landPapiWhite = 4;
+  else if (pathErr > band * 0.45) scenarioRuntime.landPapiWhite = 3;
+  else if (pathErr > -band * 0.45) scenarioRuntime.landPapiWhite = 2;
+  else if (pathErr > -band * 1.4) scenarioRuntime.landPapiWhite = 1;
+  else scenarioRuntime.landPapiWhite = 0;
+
+  // Approach speed band (EAS m/s): ~22–32 ok for this glider
+  const ias = physics.airspeed;
+  if (ias > 34) scenarioRuntime.landIas = 'high';
+  else if (ias < 20) scenarioRuntime.landIas = 'low';
+  else scenarioRuntime.landIas = 'ok';
+
+  scenarioRuntime.landGearOk = (ctrl?.gear ?? 1) > 0.5;
+  if ((ctrl?.brakes ?? 0) > 0.2 && scenarioRuntime.landAgl < 120) {
+    scenarioRuntime.landBrakesUsed = true;
+  }
+
+  // Capture touchdown snapshot once
+  if (physics.rolling && !scenarioRuntime.landWasRolling) {
+    scenarioRuntime.landTouchSink = Math.max(0, -physics.vario);
+    // prefer actual vertical speed if available
+    if (physics.velocity) {
+      scenarioRuntime.landTouchSink = Math.max(0, -physics.velocity.y);
+    }
+    scenarioRuntime.landTouchSpd = physics.airspeed;
+    scenarioRuntime.landTouchZ = z;
+    scenarioRuntime.landTouchX = x;
+  }
+  scenarioRuntime.landWasRolling = !!physics.rolling;
+
+  // Score when flight ends after a landing attempt
+  if (
+    scenarioRuntime.landingActive &&
+    !scenarioRuntime.landScored &&
+    !physics.alive &&
+    (physics.grounded || physics.landingQuality)
+  ) {
+    scenarioRuntime.landScore = scoreLanding(physics);
+    scenarioRuntime.landScored = true;
+  }
+}
+
+/**
+ * Score landing quality with debrief bullets.
+ * @param {import('./physics.js').GliderPhysics} physics
+ */
+export function scoreLanding(physics) {
+  const thrZ = runwayThresholdZ();
+  const len = RUNWAY.halfLength * 2;
+  const tz = scenarioRuntime.landTouchZ || physics.position.z;
+  const tx = scenarioRuntime.landTouchX || physics.position.x;
+  const sink = scenarioRuntime.landTouchSink || 0;
+  const bank = Math.abs(physics.rollAngle?.() || 0);
+  const onRw = physics.onRunway;
+  const q = physics.landingQuality;
+
+  let total = 100;
+  const debrief = [];
+  const detail = {};
+
+  // —— Touchdown zone (first third of strip from threshold toward −Z) ——
+  const zoneStart = thrZ; // approach end
+  const zoneEnd = thrZ - len / 3;
+  // Good if z between zoneEnd and zoneStart (and on runway)
+  const inZone = onRw && tz <= zoneStart + 5 && tz >= zoneEnd - 10;
+  const pastEnd = tz < RUNWAY.z - RUNWAY.halfLength;
+  const shortField = tz > thrZ + 15; // landed before threshold
+  let zonePts = 25;
+  if (q === 'crash') {
+    zonePts = 0;
+    debrief.push('Hard impact — not a usable landing.');
+  } else if (inZone) {
+    zonePts = 25;
+    debrief.push('Touchdown in the zone (first third of the strip).');
+  } else if (onRw && tz < zoneEnd) {
+    zonePts = 14;
+    debrief.push('Long — touched down past the aiming zone.');
+    total -= 8;
+  } else if (shortField) {
+    zonePts = 6;
+    debrief.push('Short — undershot the threshold.');
+    total -= 16;
+  } else if (!onRw) {
+    zonePts = 4;
+    debrief.push('Off the runway — field landing.');
+    total -= 18;
+  } else {
+    zonePts = 12;
+    debrief.push('On pavement but outside the ideal zone.');
+    total -= 6;
+  }
+  detail.zone = zonePts;
+
+  // —— Sink rate ——
+  let sinkPts = 25;
+  if (sink < 1.2) {
+    sinkPts = 25;
+    debrief.push('Soft touchdown sink rate.');
+  } else if (sink < 2.5) {
+    sinkPts = 18;
+    debrief.push('Acceptable sink — a bit firm.');
+    total -= 5;
+  } else if (sink < 4.5) {
+    sinkPts = 8;
+    debrief.push('Firm arrival — more flare next time.');
+    total -= 12;
+  } else {
+    sinkPts = 0;
+    debrief.push('Heavy arrival — high sink at touchdown.');
+    total -= 20;
+  }
+  detail.sink = sinkPts;
+
+  // —— Alignment ——
+  const lat = Math.abs(tx - RUNWAY.x);
+  let alignPts = 20;
+  if (lat < 4) {
+    alignPts = 20;
+    debrief.push('Good centerline alignment.');
+  } else if (lat < 9) {
+    alignPts = 12;
+    debrief.push('Slightly off centerline.');
+    total -= 5;
+  } else {
+    alignPts = 4;
+    debrief.push('Poor alignment — wide of the centerline.');
+    total -= 12;
+  }
+  if (bank > 0.35) {
+    alignPts = Math.max(0, alignPts - 8);
+    debrief.push('Wings not level at touchdown.');
+    total -= 8;
+  }
+  detail.align = alignPts;
+
+  // —— Configuration ——
+  let cfgPts = 15;
+  if (!scenarioRuntime.landGearOk) {
+    cfgPts = 0;
+    debrief.push('Gear was up — belly risk.');
+    total -= 20;
+  } else {
+    debrief.push('Gear down for landing.');
+  }
+  if (scenarioRuntime.landBrakesUsed) {
+    cfgPts = Math.min(15, cfgPts + 0);
+    // small bonus already in total
+  } else if (scenarioRuntime.landIas === 'high' || scenarioRuntime.landPath === 'high') {
+    debrief.push('Hot/high final — airbrakes would help bleed energy.');
+    total -= 6;
+    cfgPts = Math.max(5, cfgPts - 5);
+  } else {
+    debrief.push('Energy was manageable on final.');
+  }
+  detail.config = cfgPts;
+
+  // —— Energy / IAS memory ——
+  let energyPts = 15;
+  if (scenarioRuntime.landIas === 'high') {
+    energyPts = 6;
+    debrief.push('Approach speed was high.');
+    total -= 8;
+  } else if (scenarioRuntime.landIas === 'low') {
+    energyPts = 8;
+    debrief.push('Approach speed was low — near the backside.');
+    total -= 6;
+  } else {
+    energyPts = 15;
+    debrief.push('Approach speed in the slot.');
+  }
+  detail.energy = energyPts;
+
+  // Roll-out
+  if (physics.rollDistance > 1 && onRw) {
+    debrief.push(`Roll-out ${physics.rollDistance.toFixed(0)} m.`);
+  }
+  if (pastEnd && onRw) {
+    debrief.push('Used most of the strip — watch speed next time.');
+    total -= 5;
+  }
+
+  total = Math.max(0, Math.min(100, Math.round(total)));
+  // Prefer physics grade but upgrade messaging from score
+  let grade = q || 'rough';
+  if (q !== 'crash') {
+    if (total >= 85 && onRw) grade = 'runway';
+    else if (total >= 65) grade = 'good';
+    else grade = 'rough';
+  }
+
+  // Cap debrief length
+  const unique = [];
+  for (const line of debrief) {
+    if (!unique.includes(line)) unique.push(line);
+  }
+
+  return {
+    total,
+    grade,
+    debrief: unique.slice(0, 6),
+    detail,
+  };
+}
 
 const _tugFwd = new THREE.Vector3();
 const _tugUp = new THREE.Vector3();
@@ -211,19 +484,41 @@ export const SCENARIOS = {
   landing: {
     id: 'landing',
     name: 'Landing',
-    blurb: 'Final to a runway in open fields — distant hills on the horizon. Gear down, manage energy, roll out.',
+    blurb:
+      'Aim the numbers on a 3° path. Hold approach speed, gear down, flare, stay on the centerline. Brakes after touchdown.',
     gear: 1,
     terrain: 'airfield',
     spawn() {
-      // High final, aligned with runway, gentle descent toward −Z
-      const z0 = RUNWAY.z + RUNWAY.halfLength + 380;
-      const y0 = RUNWAY.y + 95;
-      return makeSpawn(0, y0, z0, 0, -2.8, -26, -0.06, 0);
+      // High final on centerline, ~3° path toward −Z.
+      // Always clear local terrain (approach hills used to bury the spawn).
+      const dist = 320;
+      const z0 = RUNWAY.z + RUNWAY.halfLength + dist;
+      const pathY = RUNWAY.y + glidePathHeight(dist) + 12;
+      const ground = terrainHeight(0, z0);
+      const y0 = Math.max(pathY, ground + 40);
+      // Sink rate roughly matches a 3° path at ~26 m/s
+      const sink = 26 * Math.tan((3 * Math.PI) / 180);
+      return makeSpawn(0, y0, z0, 0, -sink, -26, -0.05, 0);
     },
-    onStart() {
+    onStart(physics) {
       scenarioRuntime.phase = 'flight';
       scenarioRuntime.released = true;
       scenarioRuntime.t = 0;
+      scenarioRuntime.landingActive = true;
+      scenarioRuntime.landScored = false;
+      scenarioRuntime.landScore = null;
+      scenarioRuntime.landBrakesUsed = false;
+      scenarioRuntime.landWasRolling = false;
+      scenarioRuntime.landTouchSink = 0;
+      if (physics) {
+        physics.landingQuality = 'crash';
+      }
+    },
+    /** Track glide path / speed / config; score on stop. */
+    update(physics, dt, ctrl) {
+      if (!scenarioRuntime.landingActive) return;
+      scenarioRuntime.t += dt;
+      updateLandingApproach(physics, ctrl || {});
     },
   },
 
@@ -381,13 +676,17 @@ export const SCENARIOS = {
     gear: 0,
     terrain: 'coastal',
     spawn() {
-      // Parallel to ridge along +X, mid windward face
-      const x0 = -220;
-      const z0 = 75;
+      // Parallel to ridge along +X, seaward of mid-face with room to soar.
+      // Low AGL + fixed z used to dig into crest meander / rising face on start.
+      const x0 = -160;
+      const info = ridgeFaceInfo(x0);
+      // Well seaward of the steep band so crest wander has clearance
+      const z0 = info.crestZ + Math.max(info.run * 0.85, 55);
       const ground = terrainHeight(x0, z0);
-      const y0 = ground + 28;
-      // yaw = -π/2: nose along +X (along the chain)
-      return makeSpawn(x0, y0, z0, 26, 0.25, 0, -0.02, -Math.PI / 2);
+      // High enough to clear rising terrain for a few hundred meters along-chain
+      const y0 = Math.max(ground + 75, info.crestH + 40);
+      // yaw = -π/2: nose along +X; slight seaward (+Z) keeps clear of face
+      return makeSpawn(x0, y0, z0, 28, 0.5, 2.5, -0.015, -Math.PI / 2);
     },
     onStart() {
       scenarioRuntime.phase = 'flight';
@@ -410,6 +709,12 @@ export let activeScenario = SCENARIOS.ridge;
 export function setActiveScenario(id) {
   activeScenario = SCENARIOS[id] || SCENARIOS.ridge;
   scenarioRuntime.id = activeScenario.id;
+  // Clear landing session when switching scenarios in the menu
+  if (activeScenario.id !== 'landing') {
+    scenarioRuntime.landingActive = false;
+    scenarioRuntime.landScore = null;
+    scenarioRuntime.landScored = false;
+  }
   return activeScenario;
 }
 

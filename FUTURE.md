@@ -2,6 +2,26 @@
 
 Ideas deferred from design discussions. Not scheduled — pick when ready.
 
+## Landing scenario (remainder after A+B)
+
+Phases **A** (approach HUD + 3° path / PAPI) and **B** (scoring + debrief) are implemented.
+
+### C — Flare cue + go-around
+- Near-ground **FLARE** prompt when sink is high
+- Go-around if too hot/high (climb away, retry or fail after N attempts)
+- Bounce count → rough landing
+
+### D — Crosswind + pattern variants
+- Crosswind day with weathercock on roll-out
+- Base → final spawn; high-key pattern to lose energy
+- Stop distance vs runway remaining (“ran off the end”)
+
+### Other landing polish
+- Chase cam optional for first-time short final
+- Gear-up scrape audio / stronger penalty
+- Lead-in lights / extended centerline
+- Wind affecting final more strongly
+
 ## Tow scenario (remainder after A+B)
 
 Phases **A** (shared tug + rope visuals) and **B** (station-keeping + weak-link feedback) are implemented.

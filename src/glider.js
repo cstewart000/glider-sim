@@ -555,210 +555,360 @@ export function createGlider() {
   return root;
 }
 
+/** Outlined box helper for concept-art cockpit plates. */
+function cockBox(parent, w, h, d, mat, x, y, z, opts = {}) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  if (opts.rx) m.rotation.x = opts.rx;
+  if (opts.ry) m.rotation.y = opts.ry;
+  if (opts.rz) m.rotation.z = opts.rz;
+  parent.add(m);
+  addEdges(m, opts.edge ?? 14);
+  return m;
+}
+
 /**
- * Low-poly cockpit tub: panel, coaming, seat, stick, levers, simple gauges.
- * Sized for pilot eye near (0, 0.52, 0.08) looking toward −Z.
+ * Concept-art first-person cockpit: layered nose spine, center pedestal,
+ * angular coaming, wing roots, stick / levers. Eye ~ (0, 0.52, 0.08) → −Z.
  */
 function buildCockpitInterior(mats) {
   const { white, offWhite, dark, red, accent } = mats;
-  const panelMat = fillMaterial({ color: 0xe4e4ea });
-  const gaugeMat = fillMaterial({ color: 0xd8e8ee });
-  const gripMat = fillMaterial({ color: 0xc8c8d0 });
+  const panelMat = fillMaterial({ color: 0xeeeef2 });
+  const gaugeMat = fillMaterial({ color: 0xdceaf0 });
+  const gripMat = fillMaterial({ color: 0xc4c4cc });
+  const frameMat = fillMaterial({ color: 0x2e2e34 });
+  const ink = fillMaterial({ color: 0x3a3a42 });
 
   const cockpit = new THREE.Group();
   cockpit.name = 'cockpitInterior';
-  // Local offset so coaming sits under the canopy region
-  cockpit.position.set(0, 0, 0);
 
-  // —— Seat ——
+  // ═══════════════════════════════════════════════════════════
+  // SEAT + AFT (behind / under pilot)
+  // ═══════════════════════════════════════════════════════════
   const seat = new THREE.Group();
   seat.name = 'seat';
-  const seatPan = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.06, 0.42), offWhite);
-  seatPan.position.set(0, 0.08, 0.22);
-  seat.add(seatPan);
-  addEdges(seatPan, 18);
-  const seatBack = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.42, 0.06), offWhite);
-  seatBack.position.set(0, 0.28, 0.42);
-  seatBack.rotation.x = -0.12;
-  seat.add(seatBack);
-  addEdges(seatBack, 16);
-  const headrest = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, 0.05), white);
-  headrest.position.set(0, 0.48, 0.44);
-  seat.add(headrest);
-  addEdges(headrest, 18);
+  cockBox(seat, 0.4, 0.05, 0.44, offWhite, 0, 0.07, 0.24, { edge: 16 });
+  cockBox(seat, 0.4, 0.48, 0.05, offWhite, 0, 0.3, 0.44, {
+    rx: -0.1,
+    edge: 14,
+  });
+  cockBox(seat, 0.3, 0.1, 0.05, white, 0, 0.52, 0.46, { edge: 16 });
+  // Side bolsters
+  for (const s of [-1, 1]) {
+    cockBox(seat, 0.05, 0.12, 0.36, white, s * 0.2, 0.14, 0.22, { edge: 18 });
+  }
   cockpit.add(seat);
 
-  // —— Floor / footwell ——
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 0.95), white);
-  floor.position.set(0, 0.02, -0.15);
-  cockpit.add(floor);
-  addEdges(floor, 20);
+  // Aft bulkhead + headliner strip
+  cockBox(cockpit, 0.72, 0.55, 0.05, white, 0, 0.35, 0.62, { edge: 12 });
+  cockBox(cockpit, 0.7, 0.04, 0.35, offWhite, 0, 0.62, 0.35, { edge: 16 });
 
-  // Rudder pedals (static blocks)
-  for (const sx of [-0.12, 0.12]) {
-    const pedal = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 0.14), gripMat);
-    pedal.position.set(sx, 0.06, -0.48);
-    pedal.rotation.x = -0.35;
-    cockpit.add(pedal);
-    addEdges(pedal, 18);
+  // ═══════════════════════════════════════════════════════════
+  // FLOOR / FOOTWELL — broad white deck like concept coaming base
+  // ═══════════════════════════════════════════════════════════
+  cockBox(cockpit, 0.95, 0.035, 1.35, white, 0, 0.015, -0.25, { edge: 12 });
+  // Raised center walkway (concept spine base)
+  cockBox(cockpit, 0.22, 0.04, 1.15, offWhite, 0, 0.04, -0.35, { edge: 14 });
+  // Foot boxes L/R
+  for (const s of [-1, 1]) {
+    cockBox(cockpit, 0.18, 0.06, 0.28, white, s * 0.28, 0.05, -0.55, {
+      rx: -0.12,
+      edge: 16,
+    });
+  }
+  // Rudder pedals
+  for (const s of [-1, 1]) {
+    const pedal = cockBox(cockpit, 0.11, 0.025, 0.16, gripMat, s * 0.14, 0.07, -0.62, {
+      rx: -0.4,
+      edge: 18,
+    });
+    // Pedal face detail
+    cockBox(cockpit, 0.08, 0.01, 0.04, ink, s * 0.14, 0.085, -0.58, { edge: 20 });
   }
 
-  // —— Sidewalls (give depth when looking left/right) ——
-  for (const side of [-1, 1]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.38, 0.85), white);
-    wall.position.set(side * 0.32, 0.28, -0.05);
-    wall.rotation.z = side * 0.08;
-    cockpit.add(wall);
-    addEdges(wall, 16);
-    // Shoulder rail
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.7), offWhite);
-    rail.position.set(side * 0.3, 0.48, -0.1);
-    cockpit.add(rail);
-    addEdges(rail, 18);
+  // ═══════════════════════════════════════════════════════════
+  // SIDE WALLS + LONGERONS (concept: rails framing the view)
+  // ═══════════════════════════════════════════════════════════
+  for (const s of [-1, 1]) {
+    // Main sidewall plate
+    cockBox(cockpit, 0.045, 0.42, 1.15, white, s * 0.42, 0.28, -0.2, {
+      rz: s * 0.12,
+      edge: 12,
+    });
+    // Lower sill (thick coaming edge)
+    cockBox(cockpit, 0.1, 0.06, 1.2, offWhite, s * 0.38, 0.1, -0.22, {
+      rz: s * 0.08,
+      edge: 14,
+    });
+    // Upper canopy rail (dark ink line like concept)
+    cockBox(cockpit, 0.035, 0.03, 1.35, frameMat, s * 0.4, 0.58, -0.35, {
+      rz: s * 0.18,
+      rx: 0.06,
+      edge: 14,
+    });
+    // Forward rail taper toward nose
+    cockBox(cockpit, 0.03, 0.025, 0.55, frameMat, s * 0.28, 0.48, -1.05, {
+      rz: s * 0.22,
+      ry: s * -0.12,
+      edge: 16,
+    });
+    // Shoulder console shelf
+    cockBox(cockpit, 0.12, 0.04, 0.55, white, s * 0.34, 0.42, -0.15, {
+      edge: 16,
+    });
   }
 
-  // —— Instrument panel + coaming (ahead of pilot) ——
+  // ═══════════════════════════════════════════════════════════
+  // INSTRUMENT PANEL + GLARE SHIELD (concept dashboard block)
+  // ═══════════════════════════════════════════════════════════
   const panelGroup = new THREE.Group();
   panelGroup.name = 'panel';
-  panelGroup.position.set(0, 0.22, -0.55);
+  panelGroup.position.set(0, 0.2, -0.48);
 
-  // Main panel face (slightly tilted toward pilot)
-  const panel = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.28, 0.06), panelMat);
-  panel.rotation.x = -0.35;
-  panel.position.set(0, 0.06, 0);
-  panelGroup.add(panel);
-  addEdges(panel, 14);
-
-  // Upper coaming lip (frames the view)
-  const coaming = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.05, 0.22), white);
-  coaming.position.set(0, 0.22, -0.02);
-  coaming.rotation.x = -0.15;
-  panelGroup.add(coaming);
-  addEdges(coaming, 16);
-
-  // Glare shield / brow
-  const brow = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.03, 0.28), offWhite);
-  brow.position.set(0, 0.28, -0.12);
-  brow.rotation.x = 0.25;
-  panelGroup.add(brow);
-  addEdges(brow, 18);
-
-  // Simple gauge faces (3 cylinders as instrument bezels)
-  const gaugeSpecs = [
-    { x: -0.16, y: 0.08, label: 0x3cc8dc },
-    { x: 0.0, y: 0.1, label: 0x3cc8dc },
-    { x: 0.16, y: 0.08, label: 0x3cc8dc },
-  ];
-  for (const g of gaugeSpecs) {
-    const bezel = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.025, 8), dark);
-    bezel.rotation.x = Math.PI / 2 - 0.35;
-    bezel.position.set(g.x, g.y, 0.04);
-    panelGroup.add(bezel);
-    addEdges(bezel, 20);
-    const face = new THREE.Mesh(new THREE.CircleGeometry(0.045, 8), gaugeMat);
-    face.position.set(g.x, g.y + 0.005, 0.055);
-    face.rotation.x = -0.35;
-    panelGroup.add(face);
-    // Tiny needle hub
-    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.008, 5, 4), fillMaterial({ color: g.label }));
-    hub.position.set(g.x, g.y + 0.008, 0.06);
-    panelGroup.add(hub);
+  // Main panel slab (tilted to pilot)
+  cockBox(panelGroup, 0.72, 0.32, 0.07, panelMat, 0, 0.08, 0.02, {
+    rx: -0.38,
+    edge: 10,
+  });
+  // Lower knee panel
+  cockBox(panelGroup, 0.55, 0.14, 0.05, offWhite, 0, -0.06, 0.06, {
+    rx: -0.5,
+    edge: 14,
+  });
+  // Upper coaming lip (frames horizon)
+  cockBox(panelGroup, 0.78, 0.05, 0.28, white, 0, 0.26, -0.04, {
+    rx: -0.12,
+    edge: 12,
+  });
+  // Glare shield brow (concept flat top)
+  cockBox(panelGroup, 0.82, 0.035, 0.38, offWhite, 0, 0.32, -0.14, {
+    rx: 0.28,
+    edge: 12,
+  });
+  // Side cheek plates on panel
+  for (const s of [-1, 1]) {
+    cockBox(panelGroup, 0.08, 0.28, 0.12, white, s * 0.38, 0.1, 0.0, {
+      rx: -0.35,
+      rz: s * -0.15,
+      edge: 14,
+    });
   }
 
-  // Panel accent stripe
-  const pStripe = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.015, 0.02), accent);
-  pStripe.position.set(0, -0.04, 0.04);
-  pStripe.rotation.x = -0.35;
-  panelGroup.add(pStripe);
+  // Hex-ish gauge cluster (3 instruments) — cyan hubs like HUD
+  const gaugeSpecs = [
+    { x: -0.18, y: 0.1, r: 0.052 },
+    { x: 0.0, y: 0.12, r: 0.058 },
+    { x: 0.18, y: 0.1, r: 0.052 },
+  ];
+  for (const g of gaugeSpecs) {
+    const bezel = new THREE.Mesh(
+      new THREE.CylinderGeometry(g.r, g.r, 0.028, 8),
+      dark
+    );
+    bezel.rotation.x = Math.PI / 2 - 0.38;
+    bezel.position.set(g.x, g.y, 0.05);
+    panelGroup.add(bezel);
+    addEdges(bezel, 18);
+    const face = new THREE.Mesh(new THREE.CircleGeometry(g.r * 0.82, 8), gaugeMat);
+    face.position.set(g.x, g.y + 0.006, 0.065);
+    face.rotation.x = -0.38;
+    panelGroup.add(face);
+    const hub = new THREE.Mesh(
+      new THREE.SphereGeometry(0.009, 5, 4),
+      fillMaterial({ color: 0x3cc8dc })
+    );
+    hub.position.set(g.x, g.y + 0.01, 0.072);
+    panelGroup.add(hub);
+    // Needle stub
+    const needle = new THREE.Mesh(
+      new THREE.BoxGeometry(0.004, g.r * 0.7, 0.004),
+      fillMaterial({ color: 0x2a9aaa })
+    );
+    needle.position.set(g.x, g.y + 0.02, 0.07);
+    needle.rotation.x = -0.38;
+    needle.rotation.z = g.x * 2.5;
+    panelGroup.add(needle);
+  }
+  // Accent stripe under gauges
+  cockBox(panelGroup, 0.55, 0.012, 0.02, accent, 0, -0.02, 0.05, {
+    rx: -0.38,
+    edge: 18,
+  });
 
   cockpit.add(panelGroup);
 
-  // —— Control stick (animated) ——
-  const stickBase = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.04, 6), dark);
-  stickBase.position.set(0, 0.12, -0.12);
-  cockpit.add(stickBase);
-  addEdges(stickBase, 18);
-
-  const stickPivot = new THREE.Group();
-  stickPivot.name = 'stickPivot';
-  stickPivot.position.set(0, 0.14, -0.12);
-  cockpit.add(stickPivot);
-  const stickShaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.014, 0.018, 0.28, 5),
-    offWhite
-  );
-  stickShaft.position.set(0, 0.14, 0);
-  stickPivot.add(stickShaft);
-  addEdges(stickShaft, 18);
-  const stickGrip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.04), gripMat);
-  stickGrip.position.set(0, 0.28, 0);
-  stickPivot.add(stickGrip);
-  addEdges(stickGrip, 16);
-  // Red trigger nub
-  const trig = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.025, 0.02), red);
-  trig.position.set(0, 0.26, 0.025);
-  stickPivot.add(trig);
-
-  // —— Airbrake lever (left, animated) ——
-  const brakeMount = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.04), dark);
-  brakeMount.position.set(-0.22, 0.2, -0.28);
-  cockpit.add(brakeMount);
-  const brakeLever = new THREE.Group();
-  brakeLever.name = 'brakeLever';
-  brakeLever.position.set(-0.22, 0.22, -0.28);
-  cockpit.add(brakeLever);
-  const brakeArm = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.14, 0.02), offWhite);
-  brakeArm.position.set(0, 0.07, 0);
-  brakeLever.add(brakeArm);
-  addEdges(brakeArm, 18);
-  const brakeKnob = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 5), red);
-  brakeKnob.position.set(0, 0.15, 0);
-  brakeLever.add(brakeKnob);
-
-  // —— Gear lever (right, animated) ——
-  const gearMount = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.04), dark);
-  gearMount.position.set(0.22, 0.2, -0.28);
-  cockpit.add(gearMount);
-  const gearLever = new THREE.Group();
-  gearLever.name = 'gearLever';
-  gearLever.position.set(0.22, 0.22, -0.28);
-  cockpit.add(gearLever);
-  const gearArm = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.14, 0.02), offWhite);
-  gearArm.position.set(0, 0.07, 0);
-  gearLever.add(gearArm);
-  addEdges(gearArm, 18);
-  const gearKnob = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 5), red);
-  gearKnob.position.set(0, 0.15, 0);
-  gearLever.add(gearKnob);
-
-  // —— Canopy frame rails (visible from inside; frame the sky) ——
-  const frameMat = fillMaterial({ color: 0x3a3a42 });
-  // Left / right longerons
-  for (const side of [-1, 1]) {
-    const long = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.03, 1.1), frameMat);
-    long.position.set(side * 0.34, 0.55, -0.35);
-    long.rotation.z = side * 0.15;
-    long.rotation.x = 0.05;
-    cockpit.add(long);
-    addEdges(long, 16);
+  // ═══════════════════════════════════════════════════════════
+  // CENTER PEDESTAL + NOSE SPINE (hero of concept art)
+  // Layered plates stepping down toward the nose tip
+  // ═══════════════════════════════════════════════════════════
+  const spine = new THREE.Group();
+  spine.name = 'noseSpine';
+  // Stick well / pedestal base (near pilot)
+  cockBox(spine, 0.16, 0.12, 0.35, white, 0, 0.12, -0.08, { edge: 12 });
+  cockBox(spine, 0.12, 0.08, 0.22, offWhite, 0, 0.18, -0.22, { edge: 14 });
+  // Raised instrument stack blocks (concept center console)
+  cockBox(spine, 0.14, 0.1, 0.18, white, 0, 0.22, -0.38, { edge: 12 });
+  cockBox(spine, 0.1, 0.07, 0.14, panelMat, 0, 0.28, -0.48, { edge: 14 });
+  // Small gear/switch plates on stack
+  for (const [dx, dy, dz] of [
+    [-0.03, 0.32, -0.42],
+    [0.03, 0.32, -0.46],
+  ]) {
+    cockBox(spine, 0.04, 0.02, 0.04, dark, dx, dy, dz, { edge: 20 });
   }
-  // Bow across front of canopy
+
+  // Forward deck plates — tapering chain toward nose (concept long fuselage)
+  const plates = [
+    { w: 0.42, h: 0.05, d: 0.28, y: 0.1, z: -0.72, rx: 0.04 },
+    { w: 0.36, h: 0.045, d: 0.26, y: 0.12, z: -0.98, rx: 0.06 },
+    { w: 0.3, h: 0.04, d: 0.24, y: 0.14, z: -1.22, rx: 0.07 },
+    { w: 0.24, h: 0.035, d: 0.22, y: 0.155, z: -1.44, rx: 0.08 },
+    { w: 0.18, h: 0.03, d: 0.2, y: 0.17, z: -1.64, rx: 0.09 },
+    { w: 0.12, h: 0.028, d: 0.18, y: 0.185, z: -1.82, rx: 0.1 },
+  ];
+  for (const p of plates) {
+    cockBox(spine, p.w, p.h, p.d, white, 0, p.y, p.z, { rx: p.rx, edge: 12 });
+  }
+  // Centerline ridge on each plate (reads as structural ink)
+  for (const p of plates) {
+    cockBox(spine, 0.03, 0.02, p.d * 0.9, offWhite, 0, p.y + 0.03, p.z, {
+      rx: p.rx,
+      edge: 18,
+    });
+  }
+  // Nose tip cap (concept rounded point)
+  const noseTip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 6), white);
+  noseTip.rotation.x = -Math.PI / 2;
+  noseTip.position.set(0, 0.2, -1.98);
+  spine.add(noseTip);
+  addEdges(noseTip, 12);
+  // Tip fairing plate under cone
+  cockBox(spine, 0.08, 0.02, 0.12, offWhite, 0, 0.175, -1.92, {
+    rx: 0.12,
+    edge: 16,
+  });
+
+  // Side stringers along nose (concept parallel rails)
+  for (const s of [-1, 1]) {
+    cockBox(spine, 0.02, 0.025, 1.35, frameMat, s * 0.14, 0.14, -1.15, {
+      rz: s * 0.05,
+      ry: s * -0.04,
+      edge: 16,
+    });
+    // Mid structural ribs
+    for (const z of [-0.85, -1.15, -1.45, -1.7]) {
+      cockBox(spine, 0.06, 0.04, 0.02, ink, s * 0.12, 0.13, z, { edge: 20 });
+    }
+  }
+
+  cockpit.add(spine);
+
+  // ═══════════════════════════════════════════════════════════
+  // WING ROOTS (concept: white wing surfaces L/R of nose)
+  // ═══════════════════════════════════════════════════════════
+  for (const s of [-1, 1]) {
+    const root = new THREE.Group();
+    root.position.set(s * 0.48, 0.12, -0.35);
+    root.rotation.z = s * 0.1; // slight dihedral
+    root.rotation.y = s * -0.04;
+    // Main root panel
+    cockBox(root, 0.85, 0.04, 0.55, white, s * 0.35, 0, 0, { edge: 10 });
+    // Leading edge bevel
+    cockBox(root, 0.7, 0.03, 0.12, offWhite, s * 0.3, 0.02, -0.28, {
+      rx: 0.35,
+      edge: 14,
+    });
+    // Trailing edge strip
+    cockBox(root, 0.75, 0.02, 0.08, white, s * 0.32, -0.01, 0.28, { edge: 16 });
+    // Root fairing into fuselage
+    cockBox(root, 0.2, 0.08, 0.4, white, s * 0.02, -0.02, 0.05, {
+      rz: s * -0.2,
+      edge: 14,
+    });
+    // Rib lines
+    for (const x of [0.2, 0.4, 0.6]) {
+      cockBox(root, 0.015, 0.03, 0.48, ink, s * x, 0.025, 0.02, { edge: 20 });
+    }
+    cockpit.add(root);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // CANOPY BOW (front arch framing the sky)
+  // ═══════════════════════════════════════════════════════════
   const bow = new THREE.Mesh(
-    new THREE.TorusGeometry(0.36, 0.014, 5, 10, Math.PI),
+    new THREE.TorusGeometry(0.42, 0.016, 5, 12, Math.PI),
     frameMat
   );
   bow.rotation.x = Math.PI / 2;
   bow.rotation.z = Math.PI;
-  bow.position.set(0, 0.5, -0.85);
-  bow.scale.set(1, 0.55, 1);
+  bow.position.set(0, 0.52, -0.92);
+  bow.scale.set(1.05, 0.5, 1);
   cockpit.add(bow);
-  addEdges(bow, 12);
+  addEdges(bow, 10);
+  // Secondary aft bow (canopy frame depth)
+  const bow2 = new THREE.Mesh(
+    new THREE.TorusGeometry(0.4, 0.012, 4, 10, Math.PI),
+    frameMat
+  );
+  bow2.rotation.x = Math.PI / 2;
+  bow2.rotation.z = Math.PI;
+  bow2.position.set(0, 0.56, -0.55);
+  bow2.scale.set(1, 0.45, 1);
+  cockpit.add(bow2);
+  addEdges(bow2, 12);
 
-  // Aft bulkhead behind seat
-  const bulk = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.04), white);
-  bulk.position.set(0, 0.32, 0.55);
-  cockpit.add(bulk);
-  addEdges(bulk, 16);
+  // ═══════════════════════════════════════════════════════════
+  // CONTROL STICK (animated)
+  // ═══════════════════════════════════════════════════════════
+  cockBox(cockpit, 0.08, 0.04, 0.08, dark, 0, 0.11, -0.05, { edge: 16 });
+  const stickPivot = new THREE.Group();
+  stickPivot.name = 'stickPivot';
+  stickPivot.position.set(0, 0.13, -0.05);
+  cockpit.add(stickPivot);
+  const stickShaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.015, 0.02, 0.32, 6),
+    offWhite
+  );
+  stickShaft.position.set(0, 0.16, 0);
+  stickPivot.add(stickShaft);
+  addEdges(stickShaft, 16);
+  // Boot bellows (concept mechanical detail)
+  cockBox(stickPivot, 0.06, 0.05, 0.06, gripMat, 0, 0.04, 0, { edge: 18 });
+  cockBox(stickPivot, 0.055, 0.09, 0.045, gripMat, 0, 0.32, 0, { edge: 14 });
+  cockBox(stickPivot, 0.022, 0.028, 0.022, red, 0, 0.3, 0.028, { edge: 18 });
+
+  // ═══════════════════════════════════════════════════════════
+  // AIRBRAKE + GEAR LEVERS (animated)
+  // ═══════════════════════════════════════════════════════════
+  // Left: airbrake gate
+  cockBox(cockpit, 0.05, 0.1, 0.05, dark, -0.26, 0.22, -0.22, { edge: 16 });
+  cockBox(cockpit, 0.04, 0.12, 0.02, ink, -0.26, 0.28, -0.22, { edge: 18 });
+  const brakeLever = new THREE.Group();
+  brakeLever.name = 'brakeLever';
+  brakeLever.position.set(-0.26, 0.24, -0.22);
+  cockpit.add(brakeLever);
+  cockBox(brakeLever, 0.018, 0.16, 0.018, offWhite, 0, 0.08, 0, { edge: 16 });
+  const brakeKnob = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 5), red);
+  brakeKnob.position.set(0, 0.17, 0);
+  brakeLever.add(brakeKnob);
+  addEdges(brakeKnob, 16);
+
+  // Right: gear gate
+  cockBox(cockpit, 0.05, 0.1, 0.05, dark, 0.26, 0.22, -0.22, { edge: 16 });
+  cockBox(cockpit, 0.04, 0.12, 0.02, ink, 0.26, 0.28, -0.22, { edge: 18 });
+  const gearLever = new THREE.Group();
+  gearLever.name = 'gearLever';
+  gearLever.position.set(0.26, 0.24, -0.22);
+  cockpit.add(gearLever);
+  cockBox(gearLever, 0.018, 0.16, 0.018, offWhite, 0, 0.08, 0, { edge: 16 });
+  const gearKnob = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 5), red);
+  gearKnob.position.set(0, 0.17, 0);
+  gearLever.add(gearKnob);
+  addEdges(gearKnob, 16);
+
+  // Side console boxes (BRK / GEAR labels as geometry plates)
+  cockBox(cockpit, 0.08, 0.02, 0.06, accent, -0.26, 0.16, -0.22, { edge: 18 });
+  cockBox(cockpit, 0.08, 0.02, 0.06, accent, 0.26, 0.16, -0.22, { edge: 18 });
 
   cockpit.userData.stickPivot = stickPivot;
   cockpit.userData.brakeLever = brakeLever;
@@ -848,8 +998,8 @@ export function getWheelMesh(glider) {
 }
 
 /**
- * Cockpit camera: show 3D interior only (hide external airframe / canopy glass).
- * Chase cams: full glider, hide interior.
+ * Cockpit camera: show 3D interior (with concept wing roots / nose spine);
+ * hide exterior airframe / canopy glass. Chase: full glider, hide interior.
  */
 export function setCockpitVisible(glider, cockpitMode) {
   const c = glider.getObjectByName('cockpitInterior');
@@ -860,9 +1010,9 @@ export function setCockpitVisible(glider, cockpitMode) {
 
   if (cockpitMode) {
     if (c) c.visible = true;
+    // Exterior wings hidden — cockpit has its own wing-root props
     if (wings) wings.visible = false;
     if (canopyObj) canopyObj.visible = false;
-    // Hide exterior fuse meshes but keep group if needed
     if (fuse) {
       fuse.visible = true;
       fuse.traverse((o) => {

@@ -20,6 +20,12 @@ const el = {
   towStation: document.getElementById('tow-station'),
   towFill: document.getElementById('tow-tension-fill'),
   towHint: document.getElementById('tow-hint'),
+  landPanel: document.getElementById('landing-panel'),
+  landTitle: document.getElementById('land-title'),
+  landPath: document.getElementById('land-path'),
+  landIas: document.getElementById('land-ias'),
+  landCfg: document.getElementById('land-cfg'),
+  landPapi: document.getElementById('land-papi'),
   hud: document.getElementById('hud'),
   fps: document.getElementById('fps'),
   title: document.getElementById('title-screen'),
@@ -60,6 +66,8 @@ export function showTitle() {
   el.hud.classList.remove('visible');
   el.title.classList.remove('hidden');
   el.crash.classList.add('hidden');
+  if (el.landPanel) el.landPanel.classList.add('hidden');
+  if (el.towPanel) el.towPanel.classList.add('hidden');
   hideCrashFx();
   crashSeq = null;
 }
@@ -127,10 +135,16 @@ export function isResultHoldActive() {
 
 export function showLanding(physics, afterCrash = false) {
   el.crash.classList.remove('hidden');
-  el.crash.classList.toggle('is-crash', physics.landingQuality === 'crash' || afterCrash);
-  const q = physics.landingQuality;
+  // Prefer scored grade when landing scenario produced a debrief
+  const scored = scenarioRuntime.landScore;
+  const q = scored?.grade || physics.landingQuality;
+  el.crash.classList.toggle('is-crash', q === 'crash' || afterCrash);
   if (el.crashTitle) {
-    el.crashTitle.textContent = q === 'crash' ? 'CRASH' : 'LANDED';
+    if (scored && q !== 'crash') {
+      el.crashTitle.textContent = `LANDED · ${scored.total}`;
+    } else {
+      el.crashTitle.textContent = q === 'crash' ? 'CRASH' : 'LANDED';
+    }
   }
   const msgs = {
     runway: 'Runway landing — textbook roll-out.',
@@ -146,10 +160,19 @@ export function showLanding(physics, afterCrash = false) {
       ? `<br>Roll-out: <b>${physics.rollDistance.toFixed(0)} m</b>`
       : '';
   const strip = physics.onRunway ? ' · on runway' : '';
-  el.flightStats.innerHTML =
+  let stats =
     `Time aloft: <b>${mins}:${secs.toString().padStart(2, '0')}</b><br>` +
     `Max altitude: <b>${physics.maxAlt.toFixed(0)} m</b><br>` +
     `Distance: <b>${(physics.distance / 1000).toFixed(2)} km</b>${roll}${strip}`;
+  if (scored?.debrief?.length) {
+    stats +=
+      `<br><br><b>Debrief</b><ul style="text-align:left;margin:8px 0 0 1.1em;padding:0;font-size:13px;line-height:1.45">` +
+      scored.debrief.map((d) => `<li>${d}</li>`).join('') +
+      `</ul>`;
+  }
+  el.flightStats.innerHTML = stats;
+
+  if (el.landPanel) el.landPanel.classList.add('hidden');
 
   if (afterCrash && el.crashFx) {
     // Results sit on black; leave blackout full behind panel
@@ -258,6 +281,55 @@ export function updateHUD(physics, dt) {
       }
       if (el.towHint) {
         el.towHint.classList.toggle('hidden', !scenarioRuntime.releaseReady);
+      }
+    }
+  }
+
+  // Landing approach panel
+  if (el.landPanel) {
+    const onLand =
+      scenarioRuntime.landingActive &&
+      physics.alive &&
+      !physics.rolling &&
+      !physics.wingStrike;
+    el.landPanel.classList.toggle('hidden', !onLand);
+    if (onLand) {
+      const dist = scenarioRuntime.landDist;
+      const distLabel =
+        dist > 50
+          ? `${(dist / 1000).toFixed(2)} km`
+          : dist > 0
+            ? `${dist.toFixed(0)} m`
+            : 'OVER';
+      if (el.landTitle) el.landTitle.textContent = `FINAL · ${distLabel}`;
+
+      const path = scenarioRuntime.landPath || 'on';
+      el.landPanel.classList.toggle('path-high', path === 'high');
+      el.landPanel.classList.toggle('path-low', path === 'low');
+      if (el.landPath) {
+        el.landPath.textContent =
+          path === 'on' ? 'PATH · ON' : path === 'high' ? 'PATH · HIGH' : 'PATH · LOW';
+        el.landPath.classList.toggle('bad', path !== 'on');
+      }
+      const ias = scenarioRuntime.landIas || 'ok';
+      if (el.landIas) {
+        el.landIas.textContent =
+          ias === 'ok' ? 'IAS · OK' : ias === 'high' ? 'IAS · HIGH' : 'IAS · LOW';
+        el.landIas.classList.toggle('bad', ias !== 'ok');
+      }
+      if (el.landCfg) {
+        const gOk = scenarioRuntime.landGearOk;
+        el.landCfg.textContent = gOk ? 'GEAR DN' : 'GEAR UP !';
+        el.landCfg.classList.toggle('bad', !gOk);
+      }
+      // HUD PAPI lamps
+      if (el.landPapi) {
+        const lamps = el.landPapi.querySelectorAll('.papi-lamp');
+        const w = scenarioRuntime.landPapiWhite ?? 2;
+        lamps.forEach((lamp, i) => {
+          lamp.classList.toggle('white', i < w);
+          lamp.classList.toggle('red', i >= w);
+        });
       }
     }
   }
