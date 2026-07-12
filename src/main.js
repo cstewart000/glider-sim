@@ -8,6 +8,7 @@ import {
 } from './glider.js';
 import {
   createTerrain, terrainHeight, profileForScenario, setTerrainProfile,
+  getTerrainProfile,
 } from './terrain.js';
 import { ThermalSystem } from './thermals.js';
 import { CloudSystem } from './clouds.js';
@@ -621,6 +622,11 @@ function tick(_time, frame) {
       airspeed: physics.airspeed,
       vario: physics.rolling ? 0 : physics.vario,
       stalled: physics.stalled,
+      aoa: physics.aoa,
+      thermalLift: physics.thermalLift,
+      coastal: getTerrainProfile() === 'coastal',
+      liftMode: getTerrainProfile() === 'coastal' ? 'uplift' : 'thermal',
+      onRunway: physics.onRunway,
       alive: physics.alive,
       rolling: physics.rolling,
       brakes: controls.brakes,

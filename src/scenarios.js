@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { RUNWAY } from './runway.js';
 import { terrainHeight } from './terrain.js';
+import { flightAudio } from './flightAudio.js';
 
 /** @typedef {{ id: string, name: string, blurb: string, gear: number, spawn: Function, update?: Function, setupVisuals?: Function }} Scenario */
 
@@ -97,7 +98,7 @@ export const SCENARIOS = {
 
       // Weak-link style: excess load auto-releases
       if (tension > mass * 9.81 * 2.05) {
-        releaseLaunch(physics);
+        releaseLaunch(physics, { weakLink: true });
         return;
       }
 
@@ -183,7 +184,7 @@ export const SCENARIOS = {
         tension = THREE.MathUtils.clamp(tension, 0, mass * 9.81 * 1.6);
         // Weak link
         if (tension > mass * 9.81 * 1.55) {
-          releaseLaunch(physics);
+          releaseLaunch(physics, { weakLink: true });
           return;
         }
         physics.velocity.addScaledVector(_fwd, (tension / mass) * dt);
@@ -248,8 +249,9 @@ export function isLaunchAttached() {
  * @param {import('./physics.js').GliderPhysics} [physics]
  * @returns {boolean} true if a launch was released
  */
-export function releaseLaunch(physics) {
+export function releaseLaunch(physics, opts = {}) {
   if (!isLaunchAttached()) return false;
+  const wasPhase = scenarioRuntime.phase;
   scenarioRuntime.released = true;
   scenarioRuntime.phase = 'flight';
   if (physics) {
@@ -259,5 +261,8 @@ export function releaseLaunch(physics) {
       physics.velocity.y *= 0.85;
     }
   }
+  // Cable / tow release snap (or weak-link pop)
+  if (opts.weakLink) flightAudio.playWeakLink();
+  else if (wasPhase === 'winch' || wasPhase === 'tow') flightAudio.playCableRelease();
   return true;
 }
