@@ -1,0 +1,518 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #f2f2f4;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #2a2a30;
+  user-select: none;
+}
+
+#c {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* —— HUD —— */
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+#hud.visible { opacity: 1; }
+
+/* Cockpit coaming — narrow, centered; terrain visible on L/R margins */
+#cockpit-overlay {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 0;
+  width: min(52vw, 720px);
+  height: 38%;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.25s;
+  overflow: visible;
+}
+#cockpit-overlay.hidden {
+  opacity: 0;
+}
+#cockpit-overlay object,
+#cockpit-overlay svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  user-select: none;
+  pointer-events: none;
+}
+
+#stall-banner {
+  position: absolute;
+  top: 16%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 8px 28px;
+  border: 2px solid rgba(200, 60, 50, 0.9);
+  color: #b03028;
+  background: rgba(255, 255, 255, 0.78);
+  font-weight: 800;
+  letter-spacing: 0.28em;
+  font-size: 18px;
+  animation: stallPulse 0.45s ease-in-out infinite alternate;
+}
+#stall-banner.hidden { display: none; }
+@keyframes stallPulse {
+  from { opacity: 0.75; }
+  to { opacity: 1; }
+}
+
+#holo-stack, #holo-right, #thermal-hint, #fps {
+  z-index: 4;
+}
+
+/* Instruments sit in the open side margins beside the narrow cockpit */
+#holo-stack {
+  position: absolute;
+  left: 18px;
+  bottom: 12%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+#holo-right {
+  position: absolute;
+  right: 18px;
+  bottom: 14%;
+}
+
+.holo-gauge {
+  position: relative;
+  width: 108px;
+  height: 108px;
+  filter: drop-shadow(0 0 10px rgba(70, 190, 210, 0.3));
+}
+.holo-gauge.small {
+  width: 90px;
+  height: 90px;
+}
+
+.gauge-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.gauge-hex {
+  fill: rgba(255, 255, 255, 0.42);
+  stroke: rgba(70, 200, 220, 0.9);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.gauge-face {
+  fill: rgba(255, 255, 255, 0.28);
+  stroke: rgba(90, 200, 220, 0.35);
+  stroke-width: 1;
+}
+
+/* Needle is drawn inside a <g> rotated around (50,50) in SVG space */
+.needle {
+  stroke: rgba(30, 150, 175, 0.95);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  /* no CSS transform — rotation is pure SVG on parent <g> */
+}
+.needle-hub {
+  fill: rgba(40, 180, 200, 0.95);
+  stroke: none;
+}
+.hub {
+  fill: rgba(255, 255, 255, 0.85);
+  stroke: rgba(40, 160, 180, 0.9);
+  stroke-width: 1.2;
+}
+
+.gauge-readout {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  transform: translateX(-50%);
+  text-align: center;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+.g-label {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: rgba(35, 140, 160, 0.9);
+  font-weight: 650;
+}
+.g-value {
+  display: block;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: rgba(15, 120, 140, 0.95);
+}
+.g-value.up { color: #2a9a70; }
+.g-value.down { color: #c06050; }
+
+.holo-chip {
+  min-width: 76px;
+  padding: 7px 14px 6px;
+  border: 1.5px solid rgba(80, 200, 220, 0.8);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 14px rgba(70, 190, 210, 0.22);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.chip-label {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: rgba(35, 140, 160, 0.9);
+  font-weight: 650;
+}
+.chip-value {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgba(15, 120, 140, 0.95);
+  line-height: 1.15;
+}
+.chip-unit {
+  font-size: 9px;
+  color: rgba(80, 140, 160, 0.7);
+}
+
+.holo-bar {
+  position: absolute;
+  left: 118px;
+  bottom: 4px;
+  width: 9px;
+  height: 108px;
+  border: 1px solid rgba(80, 200, 220, 0.65);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.4);
+  overflow: hidden;
+}
+.vario-zero {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(60, 140, 160, 0.45);
+}
+#vario-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 50%;
+  height: 0%;
+  background: rgba(60, 200, 180, 0.85);
+}
+
+#thermal-hint {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 1.5px solid rgba(80, 200, 220, 0.85);
+  color: rgba(15, 120, 140, 0.95);
+  background: rgba(255, 255, 255, 0.6);
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+#thermal-hint.hidden { display: none; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+
+#fps {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  font-size: 11px;
+  color: rgba(100, 120, 130, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Crash tunnel vision + fade to black */
+#crash-fx {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+}
+#crash-fx.hidden {
+  display: none;
+}
+#crash-vignette {
+  position: absolute;
+  inset: 0;
+  /* Tunnel: clear center, dark edges — intensity via --vignette 0..1 */
+  background: radial-gradient(
+    circle at center,
+    transparent 0%,
+    transparent calc(55% - var(--vignette, 0) * 45%),
+    rgba(0, 0, 0, calc(var(--vignette, 0) * 0.55)) calc(70% - var(--vignette, 0) * 20%),
+    rgba(0, 0, 0, calc(var(--vignette, 0) * 0.92)) 100%
+  );
+}
+#crash-black {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: var(--blackout, 0);
+}
+
+/* Title / crash */
+#title-screen, #crash-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.35) 0%, rgba(230, 232, 238, 0.75) 100%);
+  z-index: 10;
+  transition: opacity 0.35s;
+}
+#crash-screen {
+  z-index: 14;
+}
+#crash-screen.is-crash {
+  background: radial-gradient(ellipse at center, rgba(20, 24, 32, 0.92) 0%, rgba(0, 0, 0, 0.96) 100%);
+}
+#crash-screen.is-crash .panel {
+  background: rgba(18, 20, 26, 0.95);
+  border-color: rgba(180, 80, 70, 0.45);
+  color: #e8e8ec;
+}
+#crash-screen.is-crash .panel h2 {
+  color: #e8d0d0;
+}
+#crash-screen.is-crash #flight-stats {
+  color: #9aa8b8;
+}
+#title-screen.hidden, #crash-screen.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* WebXR */
+.title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 8px;
+}
+#vr-button-host {
+  display: inline-flex;
+}
+#vr-button {
+  pointer-events: auto;
+  cursor: pointer;
+  border: 1.5px solid rgba(60, 160, 180, 0.55);
+  background: rgba(90, 200, 220, 0.18);
+  color: #1a4a58;
+  border-radius: 8px;
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-family: inherit;
+}
+#vr-button:hover:not(:disabled) {
+  background: rgba(90, 210, 230, 0.32);
+  border-color: rgba(40, 160, 180, 0.85);
+}
+#vr-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+#vr-button.vr-exit {
+  background: rgba(200, 100, 90, 0.2);
+  border-color: rgba(180, 80, 70, 0.55);
+  color: #6a3030;
+}
+.vr-tip {
+  font-size: 12px;
+  color: #4a7080;
+  line-height: 1.35;
+}
+.vr-https-tip {
+  margin-top: 12px;
+  font-size: 11px;
+  color: #6a7a88;
+  line-height: 1.4;
+}
+.vr-https-tip code {
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+/* Hide 2D coaming / dense DOM HUD chrome while in immersive VR */
+html.xr-active #cockpit-overlay,
+html.xr-active #title-screen,
+html.xr-active #crash-screen {
+  display: none !important;
+}
+html.xr-active #vr-button {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 50;
+}
+
+.panel {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1.5px solid rgba(40, 40, 48, 0.35);
+  border-radius: 4px;
+  padding: 36px 48px;
+  max-width: 440px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+}
+.panel-wide {
+  max-width: 520px;
+  padding: 28px 36px 32px;
+}
+
+.scenario-heading {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #6a90a8;
+  margin: 8px 0 10px;
+  font-weight: 700;
+}
+.scenario-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.scenario-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  border: 1.5px solid rgba(60, 160, 180, 0.35);
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 8px;
+  padding: 12px 10px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: #2a4a58;
+  box-shadow: none;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+.scenario-btn:hover {
+  background: rgba(90, 210, 230, 0.12);
+  border-color: rgba(60, 180, 200, 0.65);
+  transform: none;
+  box-shadow: none;
+}
+.scenario-btn.active {
+  background: rgba(90, 200, 220, 0.2);
+  border-color: rgba(40, 160, 180, 0.9);
+  color: #145a6a;
+  box-shadow: 0 0 0 1px rgba(60, 180, 200, 0.25);
+}
+.panel h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #222228;
+  margin-bottom: 6px;
+}
+.panel h2 {
+  font-size: 24px;
+  letter-spacing: 0.12em;
+  margin-bottom: 12px;
+  color: #222228;
+}
+.tagline {
+  color: #6a8090;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+.controls {
+  list-style: none;
+  text-align: left;
+  margin: 0 auto 20px;
+  display: inline-block;
+  font-size: 14px;
+  color: #3a3a42;
+  line-height: 1.9;
+}
+.controls kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  background: rgba(90, 200, 220, 0.12);
+  border: 1px solid rgba(60, 160, 180, 0.45);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: center;
+  color: #1a7080;
+}
+.tip {
+  font-size: 13px;
+  color: #7a8a98;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+button {
+  pointer-events: auto;
+  cursor: pointer;
+  background: transparent;
+  color: #1a7080;
+  border: 1.5px solid rgba(60, 180, 200, 0.8);
+  border-radius: 4px;
+  padding: 12px 40px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  transition: background 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 16px rgba(80, 200, 220, 0.2);
+}
+button:hover {
+  background: rgba(90, 210, 230, 0.12);
+  box-shadow: 0 0 22px rgba(80, 200, 220, 0.35);
+}
+
+#flight-stats {
+  color: #5a6a78;
+  font-size: 14px;
+  margin: 8px 0 20px;
+  line-height: 1.6;
+}
+#crash-msg { color: #3a3a42; margin-bottom: 4px; }

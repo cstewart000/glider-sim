@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMax meet">
+  <!-- Narrow coaming + animated stick & levers (IDs used by JS) -->
+  <defs>
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8f8fa" stop-opacity="0"/>
+      <stop offset="35%" stop-color="#f8f8fa" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#f0f0f4" stop-opacity="0.78"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fafafc"/>
+      <stop offset="100%" stop-color="#e8e8ee"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="200" width="800" height="300" fill="url(#fade)"/>
+
+  <path
+    d="M 40 500 L 90 380 C 140 300, 220 255, 400 240 C 580 255, 660 300, 710 380 L 760 500 Z"
+    fill="url(#panel)" stroke="#2c2c32" stroke-width="2" stroke-linejoin="round"/>
+
+  <path
+    d="M 110 500 L 145 395 C 200 320, 270 290, 400 278 C 530 290, 600 320, 655 395 L 690 500"
+    fill="none" stroke="#2c2c32" stroke-width="1.35" opacity="0.85"/>
+
+  <path d="M 220 500 L 250 350" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.3"/>
+  <path d="M 580 500 L 550 350" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.3"/>
+  <path d="M 400 278 L 400 500" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.22"/>
+
+  <path
+    d="M 300 365 C 340 335, 460 335, 500 365 L 485 410 C 445 425, 355 425, 315 410 Z"
+    fill="#f2f2f6" stroke="#2c2c32" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M 330 380 C 365 360, 435 360, 470 380" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.4"/>
+
+  <!-- ===== Airbrake lever (left) ===== -->
+  <g id="cockpit-brake" transform="translate(250, 430)">
+    <!-- Gate -->
+    <rect x="-8" y="-52" width="16" height="56" rx="3" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1.2"/>
+    <line x1="-5" y1="-45" x2="5" y2="-45" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+    <line x1="-5" y1="-8" x2="5" y2="-8" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+    <text x="0" y="18" text-anchor="middle" font-size="11" font-family="system-ui,sans-serif" fill="#5a6a78" letter-spacing="0.08em">BRK</text>
+    <!-- Arm pivots at bottom of gate; 0° = aft/in, negative = forward/out -->
+    <g id="cockpit-brake-arm" transform="rotate(-18)">
+      <line x1="0" y1="0" x2="0" y2="-48" stroke="#2c2c32" stroke-width="3.2" stroke-linecap="round"/>
+      <circle cx="0" cy="-48" r="7" fill="#e8a090" stroke="#2c2c32" stroke-width="1.3" opacity="0.9"/>
+    </g>
+  </g>
+
+  <!-- ===== Gear lever (right) ===== -->
+  <g id="cockpit-gear" transform="translate(550, 430)">
+    <rect x="-8" y="-52" width="16" height="56" rx="3" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1.2"/>
+    <line x1="-5" y1="-45" x2="5" y2="-45" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+    <line x1="-5" y1="-8" x2="5" y2="-8" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+    <text x="0" y="18" text-anchor="middle" font-size="11" font-family="system-ui,sans-serif" fill="#5a6a78" letter-spacing="0.08em">GEAR</text>
+    <!-- Down = nearly vertical aft; Up = forward (more negative rotate) -->
+    <g id="cockpit-gear-arm" transform="rotate(-15)">
+      <line x1="0" y1="0" x2="0" y2="-48" stroke="#2c2c32" stroke-width="3.2" stroke-linecap="round"/>
+      <circle cx="0" cy="-48" r="7" fill="#e8a090" stroke="#2c2c32" stroke-width="1.3" opacity="0.9"/>
+    </g>
+  </g>
+
+  <!-- ===== Control stick (center) ===== -->
+  <g id="cockpit-stick-base" transform="translate(400, 448)">
+    <ellipse cx="0" cy="0" rx="18" ry="7" fill="#ececf0" stroke="#2c2c32" stroke-width="1.2"/>
+    <!-- Roll rotates whole stick; pitch translates tip -->
+    <g id="cockpit-stick">
+      <line id="cockpit-stick-shaft" x1="0" y1="0" x2="0" y2="-58" stroke="#2c2c32" stroke-width="3" stroke-linecap="round"/>
+      <rect id="cockpit-stick-grip" x="-12" y="-72" width="24" height="16" rx="3"
+            fill="#e8e8ec" stroke="#2c2c32" stroke-width="1.3"/>
+    </g>
+  </g>
+</svg>

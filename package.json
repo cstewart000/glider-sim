@@ -1,0 +1,17 @@
+{
+  "name": "glider-sim",
+  "version": "1.0.0",
+  "description": "Low-poly glider flight simulator — WebGL, Linux-friendly",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

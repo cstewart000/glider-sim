@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Low Poly Glider</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="c"></canvas>
+
+      <div id="hud">
+        <div id="cockpit-overlay" aria-hidden="true">
+          <svg id="cockpit-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMax meet" aria-hidden="true">
+            <defs>
+              <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#f8f8fa" stop-opacity="0"/>
+                <stop offset="35%" stop-color="#f8f8fa" stop-opacity="0"/>
+                <stop offset="100%" stop-color="#f0f0f4" stop-opacity="0.78"/>
+              </linearGradient>
+              <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#fafafc"/>
+                <stop offset="100%" stop-color="#e8e8ee"/>
+              </linearGradient>
+            </defs>
+            <rect x="0" y="200" width="800" height="300" fill="url(#fade)"/>
+            <path d="M 40 500 L 90 380 C 140 300, 220 255, 400 240 C 580 255, 660 300, 710 380 L 760 500 Z" fill="url(#panel)" stroke="#2c2c32" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M 110 500 L 145 395 C 200 320, 270 290, 400 278 C 530 290, 600 320, 655 395 L 690 500" fill="none" stroke="#2c2c32" stroke-width="1.35" opacity="0.85"/>
+            <path d="M 220 500 L 250 350" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.3"/>
+            <path d="M 580 500 L 550 350" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.3"/>
+            <path d="M 400 278 L 400 500" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.22"/>
+            <path d="M 300 365 C 340 335, 460 335, 500 365 L 485 410 C 445 425, 355 425, 315 410 Z" fill="#f2f2f6" stroke="#2c2c32" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M 330 380 C 365 360, 435 360, 470 380" fill="none" stroke="#2c2c32" stroke-width="1" opacity="0.4"/>
+            <!-- Airbrake lever -->
+            <g id="cockpit-brake" transform="translate(250, 430)">
+              <rect x="-8" y="-52" width="16" height="56" rx="3" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1.2"/>
+              <line x1="-5" y1="-45" x2="5" y2="-45" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+              <line x1="-5" y1="-8" x2="5" y2="-8" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+              <text x="0" y="18" text-anchor="middle" font-size="11" font-family="system-ui,sans-serif" fill="#5a6a78" letter-spacing="0.08em">BRK</text>
+              <g id="cockpit-brake-arm" transform="rotate(-18)">
+                <line x1="0" y1="0" x2="0" y2="-48" stroke="#2c2c32" stroke-width="3.2" stroke-linecap="round"/>
+                <circle cx="0" cy="-48" r="7" fill="#e8a090" stroke="#2c2c32" stroke-width="1.3" opacity="0.9"/>
+              </g>
+            </g>
+            <!-- Gear lever -->
+            <g id="cockpit-gear" transform="translate(550, 430)">
+              <rect x="-8" y="-52" width="16" height="56" rx="3" fill="#e4e4ea" stroke="#2c2c32" stroke-width="1.2"/>
+              <line x1="-5" y1="-45" x2="5" y2="-45" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+              <line x1="-5" y1="-8" x2="5" y2="-8" stroke="#2c2c32" stroke-width="1" opacity="0.35"/>
+              <text x="0" y="18" text-anchor="middle" font-size="11" font-family="system-ui,sans-serif" fill="#5a6a78" letter-spacing="0.08em">GEAR</text>
+              <g id="cockpit-gear-arm" transform="rotate(-15)">
+                <line x1="0" y1="0" x2="0" y2="-48" stroke="#2c2c32" stroke-width="3.2" stroke-linecap="round"/>
+                <circle cx="0" cy="-48" r="7" fill="#e8a090" stroke="#2c2c32" stroke-width="1.3" opacity="0.9"/>
+              </g>
+            </g>
+            <!-- Control stick -->
+            <g id="cockpit-stick-base" transform="translate(400, 448)">
+              <ellipse cx="0" cy="0" rx="18" ry="7" fill="#ececf0" stroke="#2c2c32" stroke-width="1.2"/>
+              <g id="cockpit-stick">
+                <line id="cockpit-stick-shaft" x1="0" y1="0" x2="0" y2="-58" stroke="#2c2c32" stroke-width="3" stroke-linecap="round"/>
+                <rect id="cockpit-stick-grip" x="-12" y="-72" width="24" height="16" rx="3" fill="#e8e8ec" stroke="#2c2c32" stroke-width="1.3"/>
+              </g>
+            </g>
+          </svg>
+        </div>
+        <div id="stall-banner" class="hidden">STALL</div>
+
+        <!-- Instruments: needles rotate in a group centered on the gauge hub -->
+        <div id="holo-stack">
+          <div class="holo-gauge" id="gauge-vario">
+            <svg viewBox="0 0 100 100" class="gauge-svg">
+              <!-- Hex frame like concept art -->
+              <polygon class="gauge-hex" points="50,6 88,28 88,72 50,94 12,72 12,28" />
+              <circle class="gauge-face" cx="50" cy="50" r="32" />
+              <!-- Ticks -->
+              <g class="ticks" stroke="rgba(40,160,180,0.55)" stroke-width="1.2">
+                <line x1="50" y1="20" x2="50" y2="26" />
+                <line x1="50" y1="74" x2="50" y2="80" />
+                <line x1="20" y1="50" x2="26" y2="50" />
+                <line x1="74" y1="50" x2="80" y2="50" />
+                <line x1="28.8" y1="28.8" x2="33" y2="33" />
+                <line x1="67" y1="67" x2="71.2" y2="71.2" />
+                <line x1="71.2" y1="28.8" x2="67" y2="33" />
+                <line x1="33" y1="67" x2="28.8" y2="71.2" />
+              </g>
+              <!-- Needle group: pivot = (50,50) -->
+              <g id="vario-needle" transform="rotate(0 50 50)">
+                <line class="needle" x1="50" y1="50" x2="50" y2="22" />
+                <circle class="needle-hub" cx="50" cy="50" r="2.5" />
+              </g>
+              <circle class="hub" cx="50" cy="50" r="3.5" />
+            </svg>
+            <div class="gauge-readout">
+              <span class="g-label">VAR</span>
+              <span id="var" class="g-value">0.0</span>
+            </div>
+          </div>
+
+          <div class="holo-chip" id="chip-ias">
+            <span class="chip-label">IAS</span>
+            <span id="spd" class="chip-value">—</span>
+            <span class="chip-unit">km/h</span>
+          </div>
+
+          <div class="holo-gauge small" id="gauge-alt">
+            <svg viewBox="0 0 100 100" class="gauge-svg">
+              <polygon class="gauge-hex" points="50,6 88,28 88,72 50,94 12,72 12,28" />
+              <circle class="gauge-face" cx="50" cy="50" r="32" />
+              <g class="ticks" stroke="rgba(40,160,180,0.5)" stroke-width="1.1">
+                <line x1="50" y1="20" x2="50" y2="26" />
+                <line x1="50" y1="74" x2="50" y2="80" />
+                <line x1="20" y1="50" x2="26" y2="50" />
+                <line x1="74" y1="50" x2="80" y2="50" />
+              </g>
+              <g id="alt-needle" transform="rotate(0 50 50)">
+                <line class="needle" x1="50" y1="50" x2="50" y2="22" />
+                <circle class="needle-hub" cx="50" cy="50" r="2.5" />
+              </g>
+              <circle class="hub" cx="50" cy="50" r="3.5" />
+            </svg>
+            <div class="gauge-readout">
+              <span class="g-label">ALT</span>
+              <span id="alt" class="g-value">—</span>
+            </div>
+          </div>
+
+          <div class="holo-bar" title="Variometer">
+            <div id="vario-fill"></div>
+            <div class="vario-zero"></div>
+          </div>
+        </div>
+
+        <div id="holo-right">
+          <div class="holo-chip">
+            <span class="chip-label">HDG</span>
+            <span id="hdg" class="chip-value">—</span>
+            <span class="chip-unit">°</span>
+          </div>
+          <div class="holo-chip" id="chip-gear" style="margin-top:10px">
+            <span class="chip-label">GEAR</span>
+            <span id="gear" class="chip-value">DN</span>
+          </div>
+          <div class="holo-chip" id="chip-energy" style="margin-top:10px" title="Specific energy height h+v²/2g">
+            <span class="chip-label">E</span>
+            <span id="energy" class="chip-value">—</span>
+            <span class="chip-unit">m</span>
+          </div>
+          <div class="holo-chip" id="chip-ld" style="margin-top:10px" title="Instantaneous lift/drag">
+            <span class="chip-label">L/D</span>
+            <span id="ld" class="chip-value">—</span>
+          </div>
+        </div>
+
+        <div id="thermal-hint" class="hidden">▲ THERMAL</div>
+        <div id="fps"></div>
+      </div>
+
+      <div id="title-screen">
+        <div class="panel panel-wide">
+          <h1>LOW POLY GLIDER</h1>
+          <p class="tagline">Wireframe soaring · monochrome skies</p>
+
+          <p class="scenario-heading">SCENARIO</p>
+          <div id="scenario-list" class="scenario-list" role="listbox" aria-label="Scenarios">
+            <!-- filled by JS -->
+          </div>
+          <p id="scenario-blurb" class="tip"></p>
+
+          <ul class="controls">
+            <li><kbd>W</kbd> Nose down · <kbd>S</kbd> Nose up</li>
+            <li><kbd>A</kbd><kbd>D</kbd> Roll · <kbd>Q</kbd><kbd>E</kbd> Rudder</li>
+            <li><kbd>Space</kbd> Airbrakes · <kbd>G</kbd> Gear · <kbd>C</kbd> Camera</li>
+            <li><kbd>R</kbd> Release cable / tow · Restart (free flight)</li>
+            <li><kbd>1</kbd>–<kbd>9</kbd> Look out (5 = forward)</li>
+            <li class="vr-tip"><strong>VR</strong> Right stick pitch/roll · Left stick rudder · Trigger brakes · A gear · B release</li>
+          </ul>
+          <div class="title-actions">
+            <button id="start-btn">LAUNCH</button>
+            <div id="vr-button-host"></div>
+          </div>
+          <p class="tip vr-https-tip">Quest: open this page over <b>HTTPS</b> or <code>adb reverse tcp:5173 tcp:5173</code> then use <code>http://localhost:5173</code>.</p>
+        </div>
+      </div>
+
+      <!-- Crash FX: tunnel vision → black, then results -->
+      <div id="crash-fx" class="hidden" aria-hidden="true">
+        <div id="crash-vignette"></div>
+        <div id="crash-black"></div>
+      </div>
+
+      <div id="crash-screen" class="hidden">
+        <div class="panel">
+          <h2 id="crash-title">LANDED</h2>
+          <p id="crash-msg"></p>
+          <p id="flight-stats"></p>
+          <button id="restart-btn">FLY AGAIN</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
