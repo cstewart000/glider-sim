@@ -2,6 +2,7 @@
 
 import { controls } from './input.js';
 import { getTerrainProfile } from './terrain.js';
+import { scenarioRuntime, isLaunchAttached } from './scenarios.js';
 
 const el = {
   alt: document.getElementById('alt'),
@@ -15,6 +16,10 @@ const el = {
   varioNeedle: document.getElementById('vario-needle'),
   altNeedle: document.getElementById('alt-needle'),
   thermalHint: document.getElementById('thermal-hint'),
+  towPanel: document.getElementById('tow-panel'),
+  towStation: document.getElementById('tow-station'),
+  towFill: document.getElementById('tow-tension-fill'),
+  towHint: document.getElementById('tow-hint'),
   hud: document.getElementById('hud'),
   fps: document.getElementById('fps'),
   title: document.getElementById('title-screen'),
@@ -25,6 +30,15 @@ const el = {
   cockpit: document.getElementById('cockpit-overlay'),
   stall: document.getElementById('stall-banner'),
   crashFx: document.getElementById('crash-fx'),
+};
+
+const STATION_LABEL = {
+  ok: 'TOW · OK',
+  high: 'TOW · HIGH',
+  low: 'TOW · LOW',
+  left: 'TOW · LEFT',
+  right: 'TOW · RIGHT',
+  danger: 'TOW · WEAK LINK',
 };
 
 /** Post-landing delay before menu (crash FX or quiet hold after roll stop) */
@@ -211,13 +225,41 @@ export function updateHUD(physics, dt) {
     el.varioFill.style.background = 'rgba(200, 100, 90, 0.75)';
   }
 
-  if (physics.thermalLift > 1.5) {
+  if (physics.thermalLift > 1.5 && scenarioRuntime.phase !== 'tow') {
     // Ridge soaring (coastal) = orographic uplift; airfield = thermals
     el.thermalHint.textContent =
       getTerrainProfile() === 'coastal' ? '▲ UPLIFT' : '▲ THERMAL';
     el.thermalHint.classList.remove('hidden');
   } else {
     el.thermalHint.classList.add('hidden');
+  }
+
+  // Aerotow panel: station + rope tension
+  if (el.towPanel) {
+    const onTow =
+      scenarioRuntime.phase === 'tow' &&
+      !scenarioRuntime.released &&
+      isLaunchAttached();
+    el.towPanel.classList.toggle('hidden', !onTow);
+    if (onTow) {
+      const st = scenarioRuntime.station || 'ok';
+      el.towPanel.classList.toggle('warn', st !== 'ok' && st !== 'danger');
+      el.towPanel.classList.toggle('danger', st === 'danger' || scenarioRuntime.weakLinkWarn);
+      if (el.towStation) {
+        el.towStation.textContent = STATION_LABEL[st] || STATION_LABEL.ok;
+      }
+      const ten = Math.min(1, Math.max(0, scenarioRuntime.ropeTension || 0));
+      if (el.towFill) {
+        el.towFill.style.width = `${(ten * 100).toFixed(0)}%`;
+        if (ten > 0.85) el.towFill.style.background = 'rgba(200, 60, 50, 0.9)';
+        else if (ten > 0.55) el.towFill.style.background = 'rgba(200, 150, 40, 0.9)';
+        else if (ten > 0.12) el.towFill.style.background = 'rgba(80, 160, 120, 0.85)';
+        else el.towFill.style.background = 'rgba(120, 130, 140, 0.55)';
+      }
+      if (el.towHint) {
+        el.towHint.classList.toggle('hidden', !scenarioRuntime.releaseReady);
+      }
+    }
   }
 
   if (el.stall) {

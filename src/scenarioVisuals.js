@@ -1,16 +1,22 @@
 /**
- * Lightweight props for scenarios (winch, tow plane).
+ * Lightweight props for scenarios (winch, tow plane, rope).
+ * Tow tug pose/rope metrics come from scenarioRuntime (shared with physics).
  */
 
 import * as THREE from 'three';
-import { fillMaterial, lineMaterial } from './styleUtil.js';
+import { fillMaterial } from './styleUtil.js';
 import { RUNWAY } from './runway.js';
 import { scenarioRuntime } from './scenarios.js';
 
 let root = null;
 let towPlane = null;
+let towProp = null;
 let cableLine = null;
 let winchHouse = null;
+
+const ROPE_SEGS = 10;
+const _sag = new THREE.Vector3();
+const _mid = new THREE.Vector3();
 
 export function initScenarioVisuals(scene) {
   root = new THREE.Group();
@@ -36,44 +42,91 @@ export function initScenarioVisuals(scene) {
   winchHouse.visible = false;
   root.add(winchHouse);
 
-  // Cable line (updated each frame during winch)
-  const cableGeo = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(),
-    new THREE.Vector3(0, 10, -10),
-  ]);
+  // Multi-segment rope (sag when slack; tension recolors)
+  const ropePositions = new Float32Array((ROPE_SEGS + 1) * 3);
+  const cableGeo = new THREE.BufferGeometry();
+  cableGeo.setAttribute('position', new THREE.BufferAttribute(ropePositions, 3));
   cableLine = new THREE.Line(
     cableGeo,
-    new THREE.LineBasicMaterial({ color: 0x44444a, transparent: true, opacity: 0.65 })
+    new THREE.LineBasicMaterial({
+      color: 0x55555c,
+      transparent: true,
+      opacity: 0.75,
+      linewidth: 1,
+    })
   );
   cableLine.visible = false;
   cableLine.frustumCulled = false;
   root.add(cableLine);
 
-  // Simple tow plane (low poly)
-  towPlane = new THREE.Group();
-  const fus = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.35, 0.45, 4, 6),
-    fillMaterial({ color: 0xf0f0f4 })
-  );
-  fus.rotation.z = Math.PI / 2;
-  fus.rotation.y = Math.PI / 2;
-  towPlane.add(fus);
-  const wing = new THREE.Mesh(
-    new THREE.BoxGeometry(8, 0.12, 1.2),
-    fillMaterial({ color: 0xe8e8ee })
-  );
-  wing.position.y = 0.2;
-  towPlane.add(wing);
-  const ttail = new THREE.Mesh(
-    new THREE.BoxGeometry(0.1, 1.2, 0.8),
-    fillMaterial({ color: 0xe8e8ee })
-  );
-  ttail.position.set(0, 0.6, 1.8);
-  towPlane.add(ttail);
+  // Low-poly tow plane
+  towPlane = buildTowPlane();
   towPlane.visible = false;
   root.add(towPlane);
 
   return root;
+}
+
+function buildTowPlane() {
+  const g = new THREE.Group();
+  g.name = 'towPlane';
+  const white = fillMaterial({ color: 0xf2f2f6 });
+  const off = fillMaterial({ color: 0xe0e0e6 });
+  const dark = fillMaterial({ color: 0x3a3a42 });
+  const accent = fillMaterial({ color: 0xe85d3a });
+
+  // Fuselage
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 5.2, 6), white);
+  fus.rotation.z = Math.PI / 2;
+  fus.rotation.y = Math.PI / 2;
+  g.add(fus);
+  // Nose
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1.1, 6), white);
+  nose.rotation.x = -Math.PI / 2;
+  nose.position.z = -3.0;
+  g.add(nose);
+  // Prop disc (spins)
+  towProp = new THREE.Mesh(
+    new THREE.CircleGeometry(0.85, 12),
+    fillMaterial({ color: 0xc8d0d8, transparent: true, opacity: 0.35 })
+  );
+  towProp.position.z = -3.55;
+  g.add(towProp);
+  // Spinner
+  const spin = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 5), dark);
+  spin.position.z = -3.5;
+  g.add(spin);
+
+  // Main wing
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.12, 1.35), off);
+  wing.position.set(0, 0.15, -0.2);
+  g.add(wing);
+  // Struts (simple)
+  for (const s of [-1, 1]) {
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.06), dark);
+    strut.position.set(s * 1.8, -0.15, 0.1);
+    strut.rotation.z = s * 0.3;
+    g.add(strut);
+  }
+
+  // Tail boom already fuselage; empennage
+  const hstab = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.08, 0.7), off);
+  hstab.position.set(0, 0.15, 2.3);
+  g.add(hstab);
+  const vstab = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.15, 0.85), off);
+  vstab.position.set(0, 0.7, 2.35);
+  g.add(vstab);
+  // Accent stripe
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.06, 2.2), accent);
+  stripe.position.set(0, 0.35, -0.8);
+  g.add(stripe);
+
+  // Tow hook stub under tail
+  const hook = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.15), dark);
+  hook.position.set(0, -0.35, 2.5);
+  g.add(hook);
+
+  return g;
 }
 
 export function setScenarioVisualMode(id) {
@@ -96,40 +149,81 @@ export function updateScenarioVisuals(id, physics, dt) {
     const winchPt = new THREE.Vector3(0, RUNWAY.y + 6, RUNWAY.z - RUNWAY.halfLength - 70);
     const nose = physics.position.clone();
     nose.y -= 0.2;
-    const arr = cableLine.geometry.attributes.position.array;
-    arr[0] = nose.x;
-    arr[1] = nose.y;
-    arr[2] = nose.z;
-    arr[3] = winchPt.x;
-    arr[4] = winchPt.y;
-    arr[5] = winchPt.z;
-    cableLine.geometry.attributes.position.needsUpdate = true;
-  } else {
-    cableLine.visible = false;
+    setRopePoints(nose, winchPt, 0.15, 0.35); // slight sag
+    setRopeColor(0.2);
+    towPlane.visible = false;
+    return;
   }
 
   if (id === 'tow' && scenarioRuntime.phase === 'tow' && !scenarioRuntime.released) {
     towPlane.visible = true;
-    const t = scenarioRuntime.t;
-    towPlane.position.set(
-      0,
-      RUNWAY.y + 45 + t * 11,
-      RUNWAY.z + 20 - t * 32
-    );
-    // Face flight direction (−Z-ish climb)
-    towPlane.rotation.set(0.12, 0, 0);
-    // Tow rope
+    towPlane.position.copy(scenarioRuntime.tugPos);
+    towPlane.quaternion.copy(scenarioRuntime.tugQuat);
+    if (towProp) towProp.rotation.z += dt * 28;
+
+    // Hooks: glider nose → tug tail
+    const gHook = physics.position.clone();
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(physics.quaternion);
+    gHook.addScaledVector(fwd, 2.2);
+    gHook.y -= 0.15;
+
+    const tFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(scenarioRuntime.tugQuat);
+    const tUp = new THREE.Vector3(0, 1, 0).applyQuaternion(scenarioRuntime.tugQuat);
+    const tHook = scenarioRuntime.tugPos
+      .clone()
+      .addScaledVector(tFwd, -2.4)
+      .addScaledVector(tUp, -0.35);
+
+    const slack = scenarioRuntime.ropeSlack ? 1 : 0;
+    const sag = slack * Math.min(8, Math.max(0.5, (scenarioRuntime.ropeRest - scenarioRuntime.ropeDist) * 0.35 + 2));
+    setRopePoints(gHook, tHook, sag, scenarioRuntime.ropeSlack ? 0.85 : 0.15);
+    setRopeColor(scenarioRuntime.ropeTension);
     cableLine.visible = true;
-    const arr = cableLine.geometry.attributes.position.array;
-    arr[0] = physics.position.x;
-    arr[1] = physics.position.y;
-    arr[2] = physics.position.z;
-    arr[3] = towPlane.position.x;
-    arr[4] = towPlane.position.y - 0.3;
-    arr[5] = towPlane.position.z + 2;
-    cableLine.geometry.attributes.position.needsUpdate = true;
-  } else if (id !== 'cable') {
-    towPlane.visible = false;
-    if (id !== 'cable') cableLine.visible = false;
+    return;
+  }
+
+  towPlane.visible = false;
+  if (id !== 'cable') cableLine.visible = false;
+}
+
+/**
+ * Catenery-ish polyline between a and b.
+ * @param {THREE.Vector3} a
+ * @param {THREE.Vector3} b
+ * @param {number} sagMeters downward sag at mid
+ * @param {number} sagShape 0 = taut line, 1 = deep U
+ */
+function setRopePoints(a, b, sagMeters, sagShape) {
+  const pos = cableLine.geometry.attributes.position.array;
+  for (let i = 0; i <= ROPE_SEGS; i++) {
+    const u = i / ROPE_SEGS;
+    _mid.lerpVectors(a, b, u);
+    // Parabolic sag
+    const s = 4 * u * (1 - u) * sagMeters * sagShape;
+    _mid.y -= s;
+    pos[i * 3] = _mid.x;
+    pos[i * 3 + 1] = _mid.y;
+    pos[i * 3 + 2] = _mid.z;
+  }
+  cableLine.geometry.attributes.position.needsUpdate = true;
+  cableLine.geometry.computeBoundingSphere();
+}
+
+/** Tension 0..1+ → grey / amber / red */
+function setRopeColor(tension01) {
+  const t = Math.min(1.15, Math.max(0, tension01));
+  const mat = cableLine.material;
+  if (t < 0.15) {
+    mat.color.setHex(0x6a6a72); // slack grey
+    mat.opacity = 0.55;
+  } else if (t < 0.55) {
+    mat.color.setHex(0x55555c);
+    mat.opacity = 0.75;
+  } else if (t < 0.85) {
+    mat.color.setHex(0xc8a040); // amber load
+    mat.opacity = 0.9;
+  } else {
+    mat.color.setHex(0xd04038); // weak-link danger
+    mat.opacity = 1;
   }
 }
