@@ -1,6 +1,6 @@
 /**
  * Home airfield runway — grey landing strip + markings.
- * Sits clearly above the flattened terrain pad.
+ * Terrain hard pad is slightly below RUNWAY.y; deck sits on top.
  */
 
 import * as THREE from 'three';
@@ -62,12 +62,12 @@ export function createRunway(scene) {
 
   const L = RUNWAY.halfLength * 2;
   const W = RUNWAY.halfWidth * 2;
-  // Clearance above flattened terrain (terrain pad is ~RW_Y - 0.12)
-  const y = RUNWAY.y + 0.45;
+  // Terrain pad ≈ RUNWAY.y − 0.06; deck clearly on the surface
+  const y = RUNWAY.y + 0.12;
 
-  // Main grey asphalt deck
+  // Main grey asphalt deck (slightly oversized so edges cover terrain ramps)
   const asphalt = new THREE.Mesh(
-    new THREE.PlaneGeometry(W, L, 1, 1),
+    new THREE.PlaneGeometry(W + 1.2, L + 2, 1, 1),
     deckMat(0x6a6a70)
   );
   asphalt.rotation.x = -Math.PI / 2;
@@ -79,13 +79,13 @@ export function createRunway(scene) {
   const shoulderMat = deckMat(0x5a5a60);
   for (const side of [-1, 1]) {
     const shoulder = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.2, L * 0.98, 1, 1),
+      new THREE.PlaneGeometry(4.5, L * 0.99, 1, 1),
       shoulderMat
     );
     shoulder.rotation.x = -Math.PI / 2;
     shoulder.position.set(
-      RUNWAY.x + side * (RUNWAY.halfWidth + 1.4),
-      y - 0.02,
+      RUNWAY.x + side * (RUNWAY.halfWidth + 2.0),
+      y - 0.01,
       RUNWAY.z
     );
     shoulder.renderOrder = 2;

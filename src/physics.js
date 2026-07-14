@@ -38,18 +38,21 @@ const STALL_AOA = 0.26; // ~15°
 const MAX_AOA = 0.55;
 const TRIM_AOA = 0.07;
 
-// Control derivatives (kept mild for 60 Hz stability)
-const CM_DE = -0.55; // elevator pitch moment
-const CM_Q = -18; // pitch damping
-const CM_ALPHA = -0.4; // static pitch stability
-const CL_DA = 0.28; // roll from aileron
-const CL_P = -14; // roll damping (strong)
-const CL_BETA = 0.08; // dihedral: +β → roll to pick up wing
-const CN_DR = -0.1; // rudder yaw
-const CN_BETA = 0.18; // weathercock
-const CN_R = -8; // yaw damping
-const CN_DA = 0.06; // adverse yaw from aileron
-const CY_BETA = -0.7; // side force
+// Lateral/directional (sign conventions match body axes below):
+//   omega.x > 0 → roll right wing down; ctrl.roll > 0 → bank right
+//   omega.y < 0 → yaw nose right;      ctrl.yaw  > 0 → yaw right
+//   β = atan2(vRight, vFwd); after right rudder β tends < 0 until path catches up
+const CY_BETA = -1.35; // side force — builds track offset in a slip
+const CY_DR = 0.2; // rudder side force
+// Dihedral / roll–yaw coupling (outer wing rises with yaw)
+// Strong enough to feel; aileron still holds a deliberate cross-control slip
+const CL_BETA = 0.95; // β → roll (dihedral); −CL_BETA·β with β<0 → +p
+const CL_R = 0.38; // yaw-rate → roll (Cl_r): yaw right (ωy<0) → +p
+const CL_DR = 0.28; // direct rudder → roll (proverse)
+const CN_BETA = 0.38; // weathercock — limits extreme β while still allowing slips
+const CN_R_DAMP = 0.55; // yaw rate damping factor
+const CN_DA = 0.48; // adverse yaw from aileron
+const CN_P = 0.14; // roll-rate → yaw (adverse from p)
 
 // Control surface max deflection (rad)
 const DE_MAX = 0.35;
@@ -119,6 +122,13 @@ export class GliderPhysics {
     this._de = 0;
     this._da = 0;
     this._dr = 0;
+    // Filtered turbulence state (Ornstein–Uhlenbeck) — living air, not white noise
+    this._turbU = 0; // body-frame gust along right
+    this._turbV = 0; // along up
+    this._turbW = 0; // along forward (airspeed bump)
+    this._turbP = 0; // roll moment noise
+    this._turbQ = 0; // pitch
+    this._turbR = 0; // yaw
   }
 
   reset(spawn) {
@@ -127,6 +137,8 @@ export class GliderPhysics {
     this.quaternion.copy(spawn.quaternion);
     this.omega.set(0, 0, 0);
     this._de = this._da = this._dr = 0;
+    this._turbU = this._turbV = this._turbW = 0;
+    this._turbP = this._turbQ = this._turbR = 0;
     this.grounded = false;
     this.rolling = false;
     this.wingStrike = false;
@@ -174,14 +186,23 @@ export class GliderPhysics {
 
     // —— Wind + density ——
     getWind(this.position.x, this.position.y, this.position.z, _wind);
-    this.wind.copy(_wind);
-    this.thermalLift = _wind.y;
     this.rho = airDensity(this.position.y);
     const sigma = this.rho / RHO0;
 
     _fwd.set(0, 0, -1).applyQuaternion(this.quaternion);
     _up.set(0, 1, 0).applyQuaternion(this.quaternion);
     _right.set(1, 0, 0).applyQuaternion(this.quaternion);
+
+    // Turbulence: multi-scale filtered gusts → needs continuous stick work
+    const terrainYPre = getTerrainY(this.position.x, this.position.z);
+    const aglPre = Math.max(0, this.position.y - terrainYPre);
+    this._updateTurbulence(dt, aglPre, this.position);
+    // Apply body-frame gusts into world wind so aero (α, β) feels them
+    _wind.addScaledVector(_right, this._turbU);
+    _wind.addScaledVector(_up, this._turbV);
+    _wind.addScaledVector(_fwd, this._turbW);
+    this.wind.copy(_wind);
+    this.thermalLift = _wind.y;
 
     _airVel.copy(this.velocity).sub(_wind);
     this.tas = _airVel.length();
@@ -281,13 +302,16 @@ export class GliderPhysics {
     else _liftDir.normalize();
     if (_liftDir.dot(_up) < 0) _liftDir.negate();
 
-    // Side force from β
+    // Side force from β + rudder (needed for a held slip / track offset)
     const sideForce =
-      qDyn * WING_AREA * (CY_BETA * this.sideslip + 0.15 * this._dr);
+      qDyn * WING_AREA * (CY_BETA * this.sideslip + CY_DR * this._dr);
+    // Extra parasitic drag in sideslip (realistic slip energy bleed)
+    const betaAbs = Math.abs(this.sideslip);
+    const slipDrag = qDyn * WING_AREA * (0.12 * betaAbs + 0.55 * betaAbs * betaAbs);
 
     _force.set(0, -MASS * G, 0);
     _force.addScaledVector(_liftDir, lift);
-    _force.addScaledVector(_airVel, -drag / speed);
+    _force.addScaledVector(_airVel, -(drag + slipDrag) / speed);
     _force.addScaledVector(_right, sideForce);
 
     this.velocity.addScaledVector(_force, dt / MASS);
@@ -296,40 +320,70 @@ export class GliderPhysics {
     const spdW = this.velocity.length();
     if (spdW > VNE) this.velocity.multiplyScalar(VNE / spdW);
 
-    // —— Rotational dynamics (stability derivatives + rate-command controls) ——
-    // Full Cl·q·S·b at 60 Hz is stiff; use scaled moments + first-order stick rates.
-    const dyn = THREE.MathUtils.clamp(qDyn / 500, 0.25, 2.2); // normalize around cruise q
+    // —— Rotational dynamics ——
+    // Lateral: rudder yaws, outer wing rises (Cl_r + Cl_dr + dihedral Cl_β).
+    // Cross-control slip is intentional — only light auto-coordination.
+    const dyn = THREE.MathUtils.clamp(qDyn / 500, 0.25, 2.2);
+    const bank = Math.atan2(_right.y, _up.y); // <0 when right wing down
+    const beta = this.sideslip;
+    const yawIn = ctrl.yaw || 0; // +1 = right rudder
+    const rollIn = ctrl.roll || 0; // +1 = bank right
+    const pitchIn = ctrl.pitch || 0;
 
-    // Stick → commanded rates (rad/s)
-    const pCmd = ctrl.roll * 1.35 * dyn;
-    // +pitch stick = nose up = positive pitch rate about +right
-    const qCmd = ctrl.pitch * 1.05 * dyn;
-    // Weathercock + light coordination + rudder
-    const bank = Math.atan2(_right.y, _up.y);
-    const weathercock = -this.sideslip * 2.8 * dyn;
-    // Keep coordination mild so spiral mode stays stable
-    const coord = bank * 0.25 * (1 - Math.min(1, Math.abs(ctrl.yaw)));
-    const rCmd = -ctrl.yaw * 0.75 * dyn + weathercock + coord;
-    // Adverse yaw: rolling creates opposite yaw
-    const adverse = -ctrl.roll * 0.28 * dyn;
+    // —— Roll (p → omega.x): aileron + dihedral + yaw/roll coupling ——
+    // Right rudder (yawIn>0) → outer (left) wing up → right wing down → +omega.x
+    const pAileron = rollIn * 1.85 * dyn;
+    // Dihedral: after right yaw, β<0 → −CL_BETA·β > 0 → +p (right wing down)
+    const pDihedral = -CL_BETA * beta * dyn;
+    // Yaw-rate coupling: yawing right (ωy<0) raises left wing → +p
+    const pYawRate = -CL_R * this.omega.y * dyn;
+    // Direct proverse roll from rudder
+    const pRudder = CL_DR * yawIn * dyn;
+    // Wings-level stability — reduced so bank wanders and needs correction
+    const crossCtrl =
+      Math.abs(yawIn) > 0.12 &&
+      Math.abs(rollIn) > 0.12 &&
+      Math.sign(yawIn) !== Math.sign(rollIn);
+    const levelGain = crossCtrl ? 0.28 : 1.15; // was ~1.9 — less “on rails”
+    // bank<0 (right wing down) → pLevel<0 raises right wing → levels
+    const pLevel = bank * levelGain * dyn;
 
-    // Aero pitch stability (tends toward TRIM_AOA) + stall nose-down + brake moment
-    let qAero = -(this.aoa - TRIM_AOA) * 3.2 * dyn;
+    // —— Yaw (r → omega.y): rudder + weathercock + adverse yaw ——
+    // omega.y < 0 yaws nose right; right rudder uses negative ωy
+    const rRudder = -yawIn * 1.1 * dyn;
+    // Weathercock: β<0 → +ωy (nose back toward path) — slightly softer
+    const rWeather = -CN_BETA * 1.85 * beta * dyn;
+    // Adverse yaw from aileron + roll rate
+    const rAdverse = CN_DA * rollIn * dyn + CN_P * this.omega.x * dyn;
+    // Almost no auto-coordination during slip
+    const rCoord = crossCtrl ? 0 : bank * 0.08 * dyn;
+
+    // —— Pitch (weaker static stability → mild phugoid / pitch wander) ——
+    const qCmd = pitchIn * 1.05 * dyn;
+    let qAero = -(this.aoa - TRIM_AOA) * 2.35 * dyn;
     if (this.stalled) qAero -= Math.max(0, this.aoa - STALL_AOA) * 6;
     if (brakes > 0) qAero -= 0.55 * brakes * dyn;
-    // Roll stability: +omega.x about forward reduces +bank in our convention
-    // so leveling term is +k*bank (not negative)
-    const pAero = bank * 2.6 * dyn - this.sideslip * 0.4 * dyn;
 
-    // First-order track commanded rates + aero bias
-    const lagR = 1 - Math.exp(-5.5 * dt);
-    this.omega.x += ((pCmd + pAero) - this.omega.x) * lagR;
-    this.omega.y += ((rCmd + adverse) - this.omega.y) * lagR;
-    this.omega.z += ((qCmd + qAero) - this.omega.z) * lagR;
-    // Rate damping
-    this.omega.multiplyScalar(Math.exp(-0.35 * dt));
-    this.omega.x = THREE.MathUtils.clamp(this.omega.x, -1.5, 1.5);
-    this.omega.y = THREE.MathUtils.clamp(this.omega.y, -1.2, 1.2);
+    // Turbulence moments (Dutch-roll / light chop feel)
+    const pTarget =
+      pAileron + pDihedral + pYawRate + pRudder + pLevel + this._turbP * dyn;
+    const rTarget =
+      rRudder + rWeather + rAdverse + rCoord + this._turbR * dyn;
+    const qTarget = qCmd + qAero + this._turbQ * dyn;
+
+    // First-order track + lighter damping so small errors grow slowly
+    const lagP = 1 - Math.exp(-5.4 * dt);
+    const lagY = 1 - Math.exp(-5.0 * dt);
+    const lagQ = 1 - Math.exp(-4.8 * dt);
+    this.omega.x += (pTarget - this.omega.x) * lagP;
+    this.omega.y += (rTarget - this.omega.y) * lagY;
+    this.omega.z += (qTarget - this.omega.z) * lagQ;
+    // Reduced rate damping → needs continuous small inputs
+    this.omega.x *= Math.exp(-0.22 * dt);
+    this.omega.y *= Math.exp(-(0.2 + CN_R_DAMP * 0.1) * dt);
+    this.omega.z *= Math.exp(-0.24 * dt);
+    this.omega.x = THREE.MathUtils.clamp(this.omega.x, -1.6, 1.6);
+    this.omega.y = THREE.MathUtils.clamp(this.omega.y, -1.35, 1.35);
     this.omega.z = THREE.MathUtils.clamp(this.omega.z, -1.3, 1.3);
 
     // Apply rates about body axes
@@ -653,6 +707,54 @@ export class GliderPhysics {
         this.landingQuality = 'runway';
       }
     }
+  }
+
+  /**
+   * Multi-scale atmospheric turbulence (filtered noise).
+   * Slow meander + medium bumps + light high-freq chop → constant small corrections.
+   * Stronger near ground / ridge band; calmer high and smooth.
+   */
+  _updateTurbulence(dt, agl, pos) {
+    // Intensity: light cruise chop; a bit more near ground (toned down)
+    const low = Math.exp(-agl / 110);
+    const mid = Math.exp(-((agl - 180) ** 2) / (260 * 260));
+    const intensity = 0.22 + 0.38 * low + 0.14 * mid;
+    // Spatial “texture” so different air masses feel different
+    const spat =
+      0.85 +
+      0.2 *
+        Math.sin(pos.x * 0.011 + pos.z * 0.009) *
+        Math.cos(pos.x * 0.004 - pos.z * 0.007);
+
+    const n = () => Math.random() * 2 - 1;
+    // Ornstein–Uhlenbeck step: mean-reverting filtered noise
+    const ou = (x, tau, sigma) => {
+      const a = Math.exp(-dt / Math.max(0.05, tau));
+      return x * a + sigma * Math.sqrt(Math.max(0, 1 - a * a)) * n();
+    };
+
+    // Translational gusts (m/s) — body frame before mapping to world
+    const sLin = intensity * spat;
+    this._turbU = ou(this._turbU, 2.2, 0.55 * sLin); // lateral
+    this._turbV = ou(this._turbV, 1.6, 0.4 * sLin); // vertical (vario bobble)
+    this._turbW = ou(this._turbW, 2.8, 0.28 * sLin); // head/tail
+    // Slow large-scale meander (second layer)
+    this._turbU = ou(this._turbU, 7.0, 0.22 * sLin);
+    this._turbV = ou(this._turbV, 5.5, 0.16 * sLin);
+
+    // Angular “bumps” (rad/s targets) — mild wing rock only
+    const sAng = intensity * spat;
+    this._turbP = ou(this._turbP, 1.2, 0.22 * sAng);
+    this._turbQ = ou(this._turbQ, 1.8, 0.12 * sAng);
+    this._turbR = ou(this._turbR, 1.5, 0.16 * sAng);
+
+    // Soft clamps
+    this._turbU = THREE.MathUtils.clamp(this._turbU, -2.0, 2.0);
+    this._turbV = THREE.MathUtils.clamp(this._turbV, -1.5, 1.5);
+    this._turbW = THREE.MathUtils.clamp(this._turbW, -1.2, 1.2);
+    this._turbP = THREE.MathUtils.clamp(this._turbP, -0.45, 0.45);
+    this._turbQ = THREE.MathUtils.clamp(this._turbQ, -0.3, 0.3);
+    this._turbR = THREE.MathUtils.clamp(this._turbR, -0.35, 0.35);
   }
 
   rollAngle() {

@@ -189,15 +189,39 @@ function buildTowPlane() {
   spin.position.z = -3.5;
   g.add(spin);
 
-  // Main wing
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.12, 1.35), off);
-  wing.position.set(0, 0.15, -0.2);
-  g.add(wing);
-  // Struts (simple)
+  // Main wing with dihedral (typical high-wing tow plane ~5–7°)
+  const DIHEDRAL = (6.5 * Math.PI) / 180;
+  const halfSpan = 4.75;
+  const wingChord = 1.35;
+  const wingThick = 0.12;
+  const wingRootY = 0.28;
+  const wingZ = -0.2;
+  for (const side of [-1, 1]) {
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(halfSpan, wingThick, wingChord),
+      off
+    );
+    // Pivot at root: place half-panel outboard, then fold up by dihedral
+    panel.position.set(side * (halfSpan * 0.5), 0, 0);
+    const wingRoot = new THREE.Group();
+    wingRoot.position.set(0, wingRootY, wingZ);
+    wingRoot.rotation.z = side * DIHEDRAL;
+    wingRoot.add(panel);
+    g.add(wingRoot);
+    // Wing tip (slightly rounded look)
+    const tip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, wingThick * 0.9, wingChord * 0.85),
+      accent
+    );
+    tip.position.set(side * (halfSpan - 0.08), 0, 0);
+    wingRoot.add(tip);
+  }
+  // Cabane / strut to each wing (meets raised panel)
   for (const s of [-1, 1]) {
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.06), dark);
-    strut.position.set(s * 1.8, -0.15, 0.1);
-    strut.rotation.z = s * 0.3;
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, 0.06), dark);
+    const midY = wingRootY + Math.sin(DIHEDRAL) * 1.9 * 0.5;
+    strut.position.set(s * 1.9, midY * 0.35 - 0.05, 0.05);
+    strut.rotation.z = s * (0.35 + DIHEDRAL);
     g.add(strut);
   }
 

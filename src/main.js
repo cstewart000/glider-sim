@@ -243,7 +243,7 @@ const launchPadGroup = new THREE.Group();
 {
   const padGeo = new THREE.CylinderGeometry(5, 5.5, 0.3, 8);
   const pad = new THREE.Mesh(padGeo, new THREE.MeshBasicMaterial({ color: 0xd8d8de }));
-  pad.position.set(0, RUNWAY.y + 0.2, RUNWAY.z + RUNWAY.halfLength - 8);
+  pad.position.set(0, RUNWAY.y + 0.14, RUNWAY.z + RUNWAY.halfLength - 8);
   launchPadGroup.add(pad);
   const padEdges = new THREE.LineSegments(
     new THREE.EdgesGeometry(padGeo, 15),

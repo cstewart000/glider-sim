@@ -50,6 +50,7 @@ const STATION_LABEL = {
   left: 'TOW · LEFT',
   right: 'TOW · RIGHT',
   danger: 'TOW · WEAK LINK',
+  upset: 'TOW · TUG UPSET',
 };
 
 /** Post-landing delay before menu (crash FX or quiet hold after roll stop) */
@@ -284,16 +285,34 @@ export function updateHUD(physics, dt) {
     el.towPanel.classList.toggle('hidden', !onTow);
     if (onTow) {
       const st = scenarioRuntime.station || 'ok';
-      el.towPanel.classList.toggle('warn', st !== 'ok' && st !== 'danger');
-      el.towPanel.classList.toggle('danger', st === 'danger' || scenarioRuntime.weakLinkWarn);
+      el.towPanel.classList.toggle(
+        'warn',
+        st !== 'ok' && st !== 'danger' && st !== 'upset'
+      );
+      el.towPanel.classList.toggle(
+        'danger',
+        st === 'danger' || st === 'upset' || scenarioRuntime.weakLinkWarn
+      );
       if (el.towStation) {
-        el.towStation.textContent = STATION_LABEL[st] || STATION_LABEL.ok;
+        let label = STATION_LABEL[st] || STATION_LABEL.ok;
+        if (st === 'ok' && (scenarioRuntime.tugStress || 0) > 0.35) {
+          label = 'TOW · TUG STRAIN';
+        }
+        el.towStation.textContent = label;
       }
-      const ten = Math.min(1, Math.max(0, scenarioRuntime.ropeTension || 0));
+      // Tension bar follows smoothed physics tension (light visual wobble)
+      const ten = Math.min(
+        1,
+        Math.max(
+          0,
+          (scenarioRuntime.ropeTension || 0) +
+            (scenarioRuntime.ropeOsc || 0) * 0.06 * Math.sin(performance.now() * 0.006)
+        )
+      );
       if (el.towFill) {
         el.towFill.style.width = `${(ten * 100).toFixed(0)}%`;
-        if (ten > 0.85) el.towFill.style.background = 'rgba(200, 60, 50, 0.9)';
-        else if (ten > 0.55) el.towFill.style.background = 'rgba(200, 150, 40, 0.9)';
+        if (ten > 0.85 || st === 'danger') el.towFill.style.background = 'rgba(200, 60, 50, 0.9)';
+        else if (ten > 0.55 || st === 'upset') el.towFill.style.background = 'rgba(200, 150, 40, 0.9)';
         else if (ten > 0.12) el.towFill.style.background = 'rgba(80, 160, 120, 0.85)';
         else el.towFill.style.background = 'rgba(120, 130, 140, 0.55)';
       }

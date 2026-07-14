@@ -185,43 +185,45 @@ function heightAirfield(x, z) {
     h += far * spike * 0.55 * smoothstep(750, 1100, r);
   }
 
-  // Flatten home runway + wide apron so LOD chunks cannot bury the strip
-  // (far LOD segs ~45 m — pad must extend past one segment beyond the asphalt)
+  // Flatten home field so LOD triangles cannot bury the runway.
+  // CHUNK_SIZE is large (~360 m) — pad must span multiple segs beyond asphalt.
   const adx = Math.abs(x - RW_X);
   const adz = Math.abs(z - RW_Z);
+  // Hard asphalt + shoulders: slightly BELOW visual deck so strip sits on top
   const hard =
-    adx <= RW_HW + 6 && adz <= RW_HL + 8;
-  const padX = RW_HW + 70;
-  const padZ = RW_HL + 90;
+    adx <= RW_HW + 12 && adz <= RW_HL + 16;
+  // Wide dead-flat plateau under whole airfield (stops hills poking through)
+  const fieldX = 160;
+  const fieldZ = 320;
   if (hard) {
-    // Deck sits slightly below visual asphalt so mesh never pokes through
-    h = RW_Y - 0.12;
-  } else if (adx < padX && adz < padZ) {
-    const tx = adx / padX;
-    const tz = adz / padZ;
+    h = RW_Y - 0.06;
+  } else if (adx < fieldX && adz < fieldZ) {
+    const tx = adx / fieldX;
+    const tz = adz / fieldZ;
     const t = Math.max(tx, tz);
-    const w = (1 - t) * (1 - t);
-    h = h * (1 - w) + (RW_Y - 0.12) * w;
+    // Inner 70% of field: exact RW_Y; outer ring blends out
+    if (t < 0.72) {
+      h = RW_Y - 0.02;
+    } else {
+      const u = (t - 0.72) / 0.28;
+      const w = (1 - u) * (1 - u);
+      h = h * (1 - w) + (RW_Y - 0.02) * w;
+    }
   }
 
-  // Long final corridor (+Z past threshold only): chop hills under the 3° path.
-  // Never runs on the hard runway deck (would sink the strip).
+  // Long final corridor (+Z past threshold): keep approach clear of hills
   const thrZ = RW_Z + RW_HL;
-  const apprLen = 500;
-  const apprHalfW = 58;
-  if (!hard && z > thrZ && z < thrZ + apprLen && adx < apprHalfW) {
+  const apprLen = 520;
+  const apprHalfW = 70;
+  const onHard = adx <= RW_HW + 12 && adz <= RW_HL + 16;
+  if (!onHard && z > thrZ && z < thrZ + apprLen && adx < apprHalfW) {
     const tz = clamp01((z - thrZ) / apprLen);
     const tx = adx / apprHalfW;
-    // Strong near threshold / centerline; still meaningful near landing spawn
-    const along = 1 - tz * tz * (0.35 + 0.65 * tz);
+    const along = 1 - tz * tz * (0.3 + 0.7 * tz);
     const w = along * (1 - tx) * (1 - tx);
-    // Field-level target with gentle rise — always ≤ path − margin, ≥ deck
     const pathClear =
       RW_Y + (z - thrZ) * Math.tan((3 * Math.PI) / 180) - 16;
-    const target = Math.max(
-      RW_Y - 0.12,
-      Math.min(pathClear, RW_Y - 0.12 + tz * 12)
-    );
+    const target = Math.max(RW_Y - 0.02, Math.min(pathClear, RW_Y + tz * 10));
     if (h > target) {
       h = h * (1 - w) + target * w;
     }

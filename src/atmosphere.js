@@ -56,10 +56,18 @@ function ambientWind(x, y, z, profile, out) {
   const agl = Math.max(0, y - ground);
   // Shear: ~0.55 at surface, 1.0 by 300 m AGL
   const shear = 0.55 + 0.45 * Math.min(1, agl / 300);
-  // Very slow gust (avoid high-frequency force noise → visual jitter)
+  // Gentle wind meander (main chop is in physics turbulence filter)
   const t = performance.now() * 0.001;
-  const gust = 0.12 * Math.sin(t * 0.35 + x * 0.008) + 0.08 * Math.sin(t * 0.55 + z * 0.006);
-  return out.set(base.x * shear, 0, base.z * shear + gust);
+  const meander =
+    0.18 * Math.sin(t * 0.09 + x * 0.003) +
+    0.1 * Math.sin(t * 0.15 + z * 0.004);
+  const verticalBobble =
+    0.035 * Math.sin(t * 0.18 + x * 0.005) + 0.02 * Math.cos(t * 0.14 + z * 0.006);
+  return out.set(
+    base.x * shear + meander * 0.25,
+    verticalBobble * (0.35 + 0.45 * Math.min(1, agl / 200)),
+    base.z * shear + meander * 0.65
+  );
 }
 
 /**

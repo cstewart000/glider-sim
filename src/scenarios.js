@@ -48,6 +48,16 @@ export const scenarioRuntime = {
   stationLat: 0,
   releaseReady: false,
   weakLinkWarn: false,
+  /** Accumulated tug distress 0…1 — high → abort */
+  tugStress: 0,
+  /** Rope pitch angle at glider (rad): + = rope above nose / high tow */
+  ropePitch: 0,
+  /** Rope yaw angle at glider (rad): + = rope to the right */
+  ropeYaw: 0,
+  /** Oscillating snatch component 0…1 for HUD */
+  ropeOsc: 0,
+  /** 'ok' | 'weaklink' | 'tug_abort' | 'pilot' last release cause */
+  towAbort: null,
   // —— Landing approach / score ——
   landingActive: false,
   /** Horizontal distance to threshold (m) */
@@ -512,46 +522,145 @@ const _rope = new THREE.Vector3();
 /** Ideal formation: slightly below and behind the tug (classic low tow). */
 const TOW_BEHIND = 47;
 const TOW_BELOW = 6;
-const TOW_REST = 48;
-const WEAK_LINK_G = 1.55; // × weight
-const WARN_G = 1.25;
+const TOW_REST = 50;
+const WEAK_LINK_G = 2.0; // × weight — room for takeoff; still breakable off-station
+const WARN_G = 1.4;
+/** Tug aborts when cumulative distress hits this */
+const TUG_ABORT_STRESS = 1.0;
+
+// Oscillator state for snatch loads (underdamped rope / whip)
+let _towStretch = 0;
+let _towStretchV = 0;
+let _towOscPhase = 0;
+let _towPrevTen = 0;
+/** Low-pass filtered tension (N) — keeps forces from frame-snatching */
+let _towSmoothTen = 0;
+
+/** Tug ground roll duration before rotate (s) */
+const TUG_TAKEOFF_T = 7.5;
+/** Tug starts this far ahead of glider along −Z (m) */
+const TUG_START_AHEAD = 52;
 
 /**
- * Advance tug along climb-out; slight weave so it feels alive.
- * Writes scenarioRuntime.tugPos / tugVel / tugQuat.
+ * Tug: standing start → ground roll → climb-out.
+ * Bad rope loads slow the climb, increase weave, and bank the tug (upset).
  */
-function updateTugState(t, dt) {
-  // Nominal path: climb and run down-strip (−Z)
-  const baseY = RUNWAY.y + 45 + t * 11;
-  const baseZ = RUNWAY.z + 20 - t * 32;
-  // Gentle lateral weave + pitch bob
-  const weave = Math.sin(t * 0.55) * 6;
-  const bob = Math.sin(t * 0.9) * 1.2;
+/** Ground-roll accel (m/s²) — shared so lift-off state matches airborne start */
+const TUG_ACCEL = 4.2;
+/** Nose-up at lift-off (rad) */
+const TUG_LIFT_PITCH = 0.18;
+/** Vertical rate at wheels-up (m/s) — continuous into climb */
+const TUG_LIFT_VY = 1.2;
+/** CG height gain during rotate (m) */
+const TUG_ROTATE_LIFT = 0.72;
 
+function updateTugState(t, dt) {
+  const stress = scenarioRuntime.tugStress || 0;
   const prev = scenarioRuntime.tugPos.clone();
-  scenarioRuntime.tugPos.set(weave, baseY + bob, baseZ);
-  if (dt > 1e-6) {
-    scenarioRuntime.tugVel
-      .copy(scenarioRuntime.tugPos)
-      .sub(prev)
-      .multiplyScalar(1 / dt);
+
+  // Glider start z (same as tow spawn) used as reference
+  const gliderStartZ = RUNWAY.z + RUNWAY.halfLength - 40;
+  const tugStartZ = gliderStartZ - TUG_START_AHEAD; // ahead toward −Z
+  const gearY = RUNWAY.y + 2.4; // tug CG approx on gear
+  const loftS = 0.5 * TUG_ACCEL * TUG_TAKEOFF_T * TUG_TAKEOFF_T;
+  const liftSpd = TUG_ACCEL * TUG_TAKEOFF_T;
+  const liftY = gearY + TUG_ROTATE_LIFT;
+
+  if (t < TUG_TAKEOFF_T) {
+    // Ground roll: a ≈ 4 m/s², s = ½at² → continuous rotate into lift-off
+    const s = 0.5 * TUG_ACCEL * t * t;
+    const spd = TUG_ACCEL * t;
+    const rotT = 1.4;
+    const rotStart = TUG_TAKEOFF_T - rotT;
+    const rotBlend =
+      t > rotStart ? THREE.MathUtils.smoothstep(t, rotStart, TUG_TAKEOFF_T) : 0;
+    const pitchUp = 0.02 + rotBlend * (TUG_LIFT_PITCH - 0.02);
+    // CG rises smoothly with rotate (no step at airborne handoff)
+    const y = gearY + rotBlend * TUG_ROTATE_LIFT;
+    const vy = rotBlend * TUG_LIFT_VY;
+    scenarioRuntime.tugPos.set(0, y, tugStartZ - s);
+    scenarioRuntime.tugVel.set(0, vy, -spd);
+    _tugFwd.set(0, Math.sin(pitchUp), -Math.cos(pitchUp)).normalize();
+    _tugUp.set(0, 1, 0);
+    _tugRight.set(1, 0, 0);
+    _tugUp.crossVectors(_tugFwd, _tugRight).normalize();
+    _tugRight.crossVectors(_tugUp, _tugFwd).normalize();
   } else {
-    scenarioRuntime.tugVel.set(0, 11, -32);
+    // Airborne: position/velocity continuous with lift-off state
+    const ta = t - TUG_TAKEOFF_T;
+    const climbTarget = 10.5 * (1 - 0.55 * stress);
+    const fwdTarget = 30 * (1 - 0.25 * stress);
+    // Exponential approach of rates → y,z and ẏ,ż match at ta=0
+    // s(ta) = v∞·ta − (v∞−v0)·τ·(1−e^{−ta/τ})
+    // s(0)=0, s'(0)=v0, s'(∞)=v∞
+    const tauY = 2.8;
+    const tauZ = 2.2;
+    const eY = Math.exp(-ta / tauY);
+    const eZ = Math.exp(-ta / tauZ);
+    const dY =
+      climbTarget * ta - (climbTarget - TUG_LIFT_VY) * tauY * (1 - eY);
+    const dS =
+      fwdTarget * ta - (fwdTarget - liftSpd) * tauZ * (1 - eZ);
+    const baseY = liftY + dY;
+    const baseZ = tugStartZ - loftS - dS;
+    // Weave / bob fade in after lift-off (no lateral pop)
+    const airRamp = THREE.MathUtils.smoothstep(ta, 0, 5);
+    const weaveAmp = 4 + stress * 18 + (scenarioRuntime.ropeOsc || 0) * 6;
+    const weave =
+      Math.sin(ta * (0.45 + stress * 0.7) + (scenarioRuntime.ropeOsc || 0) * 0.5) *
+      weaveAmp *
+      airRamp;
+    const bob =
+      (Math.sin(ta * (0.55 + stress * 0.8)) * (0.7 + stress * 3) +
+        Math.sin(ta * 1.1) * (scenarioRuntime.ropeOsc || 0) * 0.8) *
+      airRamp;
+    scenarioRuntime.tugPos.set(weave, baseY + bob, baseZ);
+
+    // Analytic rates (stable vs finite-diff on bob/weave)
+    const vy = climbTarget - (climbTarget - TUG_LIFT_VY) * eY;
+    const vz = -(fwdTarget - (fwdTarget - liftSpd) * eZ);
+    // Weave/bob derivative is small; blend finite-diff for those only
+    if (dt > 1e-6) {
+      const dPos = scenarioRuntime.tugPos.clone().sub(prev).multiplyScalar(1 / dt);
+      scenarioRuntime.tugVel.set(
+        dPos.x,
+        THREE.MathUtils.lerp(vy, dPos.y, 0.35),
+        THREE.MathUtils.lerp(vz, dPos.z, 0.35)
+      );
+    } else {
+      scenarioRuntime.tugVel.set(0, vy, vz);
+    }
+
+    // Attitude: blend lift-off pitch into flight-path pitch (no instant snap)
+    const pathPitch = Math.atan2(
+      Math.max(0.05, scenarioRuntime.tugVel.y),
+      Math.max(8, -scenarioRuntime.tugVel.z)
+    );
+    const attBlend = THREE.MathUtils.smoothstep(ta, 0, 2.5);
+    const pitch = THREE.MathUtils.lerp(TUG_LIFT_PITCH, pathPitch, attBlend);
+    _tugFwd.set(0, Math.sin(pitch), -Math.cos(pitch)).normalize();
+    // Slight heading follow from lateral velocity
+    if (Math.abs(scenarioRuntime.tugVel.x) > 0.15) {
+      const yaw = Math.atan2(scenarioRuntime.tugVel.x, -scenarioRuntime.tugVel.z);
+      _tugFwd.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw * 0.85);
+      _tugFwd.normalize();
+    }
+    _tugUp.set(0, 1, 0);
+    _tugRight.crossVectors(_tugUp, _tugFwd).normalize();
+    _tugUp.crossVectors(_tugFwd, _tugRight).normalize();
+    const bank =
+      (-Math.sin(ta * (0.45 + stress * 0.6)) * (0.08 + stress * 0.45) -
+        (scenarioRuntime.stationLat || 0) * 0.008 * stress) *
+      airRamp;
+    _tugUp.applyAxisAngle(_tugFwd, THREE.MathUtils.clamp(bank, -0.55, 0.55));
+    _tugRight.crossVectors(_tugUp, _tugFwd).normalize();
   }
 
-  // Face velocity (climb attitude)
-  _tugFwd.copy(scenarioRuntime.tugVel);
-  if (_tugFwd.lengthSq() < 1e-4) _tugFwd.set(0, 0.3, -1);
-  _tugFwd.normalize();
-  _tugUp.set(0, 1, 0);
-  _tugRight.crossVectors(_tugUp, _tugFwd).normalize();
-  _tugUp.crossVectors(_tugFwd, _tugRight).normalize();
-  // Bank slightly into weave
-  const bank = -Math.sin(t * 0.55) * 0.12;
-  _tugUp.applyAxisAngle(_tugFwd, bank);
-  _tugRight.crossVectors(_tugUp, _tugFwd).normalize();
-  // Matrix from axes: +X right, +Y up, −Z forward → columns
-  const m = new THREE.Matrix4().makeBasis(_tugRight, _tugUp, _tugFwd.clone().negate());
+  const m = new THREE.Matrix4().makeBasis(
+    _tugRight,
+    _tugUp,
+    _tugFwd.clone().negate()
+  );
   scenarioRuntime.tugQuat.setFromRotationMatrix(m);
 }
 
@@ -578,25 +687,31 @@ export const SCENARIOS = {
   cable: {
     id: 'cable',
     name: 'Cable launch',
-    blurb: 'Winch launch — hard acceleration and climb from the start. Press R to release the cable.',
+    blurb:
+      'Winch launch — accelerate on the strip, rotate, then kite steeply on the cable. R releases.',
     gear: 1,
     terrain: 'airfield',
     spawn() {
-      // On runway, facing down-strip (−Z), rolling start
-      const z0 = RUNWAY.z + RUNWAY.halfLength - 40;
-      return makeSpawn(0, RUNWAY.y + 1.15, z0, 0, 0, -6, 0.1, 0);
+      // Standing start on runway (gear on deck)
+      const z0 = RUNWAY.z + RUNWAY.halfLength - 55;
+      return makeSpawn(0, RUNWAY.y + 1.05, z0, 0, 0, 0, 0.01, 0);
     },
     /** @param {import('./physics.js').GliderPhysics} physics */
     onStart(physics) {
       scenarioRuntime.phase = 'winch';
       scenarioRuntime.released = false;
       scenarioRuntime.t = 0;
+      scenarioRuntime._winchAir = false;
+      scenarioRuntime._winchAirT = 0;
       physics.suppressGround = true;
       physics.rolling = false;
       physics.grounded = false;
+      if (physics.velocity) physics.velocity.set(0, 0, 0);
+      if (physics.omega) physics.omega.set(0, 0, 0);
     },
     /**
-     * Winch as cable tension along hook→drum (not free velocity hacks).
+     * Classic winch: ground roll → rotate → kite (steep pitch on the cable).
+     * Ground phase is pinned to the deck so rolling physics cannot kill accel.
      * @param {import('./physics.js').GliderPhysics} physics
      */
     update(physics, dt) {
@@ -604,59 +719,127 @@ export const SCENARIOS = {
       scenarioRuntime.t += dt;
       const t = scenarioRuntime.t;
       const agl = physics.position.y - RUNWAY.y;
+      const spd = Math.hypot(physics.velocity.x, physics.velocity.z);
 
-      if (t > 18 || agl > 380 || physics.airspeed > 55) {
-        releaseLaunch(physics);
-        return;
-      }
-
-      physics.suppressGround = true;
-      if (physics.rolling) {
-        physics.rolling = false;
-        physics.grounded = false;
-      }
-
-      // Drum / cable point down-field, rises as launch progresses
+      // Winch drum at far end of strip, on the ground
       const winchPt = new THREE.Vector3(
         0,
-        RUNWAY.y + 6 + Math.min(40, t * 4),
-        RUNWAY.z - RUNWAY.halfLength - 90
+        RUNWAY.y + 0.8,
+        RUNWAY.z - RUNWAY.halfLength - 70
       );
-      _fwd.copy(winchPt).sub(physics.position);
-      const dist = Math.max(2, _fwd.length());
+
+      const fwdB = new THREE.Vector3(0, 0, -1).applyQuaternion(physics.quaternion);
+      const upB = new THREE.Vector3(0, 1, 0).applyQuaternion(physics.quaternion);
+      const hook = physics.position
+        .clone()
+        .addScaledVector(fwdB, 1.6)
+        .addScaledVector(upB, -0.3);
+
+      _fwd.copy(winchPt).sub(hook);
+      const dist = Math.max(3, _fwd.length());
       _fwd.multiplyScalar(1 / dist);
 
-      // Winch reels in: tension scales with power setting and cable stretch feel
-      const power = t < 2 ? 0.55 + t * 0.22 : t < 11 ? 1.0 : Math.max(0.3, 1.0 - (t - 11) / 8);
-      // Peak tension ~1.4–1.8× weight early (real winches can be aggressive)
+      // Spool-up → full power → ease only very high
+      const power =
+        t < 1.0 ? 0.6 + t * 0.45 : t < 14 ? 1.1 : Math.max(0.35, 1.1 - (t - 14) / 10);
       const mass = 380;
-      const Tmax = mass * 9.81 * (1.55 * power);
-      // Closing rate along cable
-      const vAlong = physics.velocity.dot(_fwd);
-      // Pay-out target: want cable shortening ~12–22 m/s early
-      const reel = 14 + power * 12;
-      const err = reel + vAlong; // positive if not approaching fast enough
-      let tension = THREE.MathUtils.clamp(Tmax * 0.35 + err * mass * 1.8, 0, Tmax);
-      // Slack if flying past / diving into cable
-      if (vAlong > 2) tension *= 0.25;
+      const weight = mass * 9.81;
+      const Tmax = weight * 2.05 * power;
 
-      // Weak-link style: excess load auto-releases
-      if (tension > mass * 9.81 * 2.05) {
+      const vAlong = physics.velocity.dot(_fwd);
+      const reelWant = t < 2 ? 14 + t * 6 : 26 + power * 6;
+      let tension = THREE.MathUtils.clamp(
+        Tmax * 0.55 + (reelWant + vAlong) * mass * 2.8,
+        0,
+        Tmax
+      );
+      if (vAlong > 5) tension *= 0.25;
+
+      if (tension > weight * 2.4) {
         releaseLaunch(physics, { weakLink: true });
         return;
       }
 
-      physics.velocity.addScaledVector(_fwd, (tension / mass) * dt);
+      // —— Phases ——
+      const rotateSpd = 15;
+      if (!scenarioRuntime._winchAir && (spd >= rotateSpd || t > 4.5)) {
+        scenarioRuntime._winchAir = true;
+        scenarioRuntime._winchAirT = t;
+      }
+      const airborne = !!scenarioRuntime._winchAir;
+      const sinceAir = airborne ? t - (scenarioRuntime._winchAirT || t) : 0;
 
-      // Mild pitch cue only (pilot still flies) — not hard lock
-      if (t < 10 && agl < 200) {
-        const e = new THREE.Euler().setFromQuaternion(physics.quaternion, 'YXZ');
-        const targetPitch = THREE.MathUtils.clamp(0.12 + agl * 0.0004, 0.1, 0.32);
-        e.x = THREE.MathUtils.lerp(e.x, targetPitch, 1 - Math.exp(-1.2 * dt));
-        physics.quaternion.setFromEuler(e);
+      physics.suppressGround = true;
+      physics.rolling = false;
+      physics.grounded = false;
+
+      // Pitch schedule
+      let targetPitch = 0.03;
+      if (!airborne) {
+        targetPitch = spd > 10 ? 0.05 + (spd - 10) * 0.012 : 0.02;
+        // Pin to deck — pure acceleration along strip
+        physics.position.y = RUNWAY.y + 1.05;
+        physics.velocity.y = 0;
+        physics.velocity.x *= 0.8;
+        // Cable accel (mostly −Z)
+        physics.velocity.addScaledVector(_fwd, (tension / mass) * dt);
+        // Guarantee forward accel on roll
+        physics.velocity.z -= (tension / mass) * 0.85 * dt;
+      } else {
+        // Kite: circular-ish climb on the cable (swing up while reeling in)
+        const kiteT = THREE.MathUtils.clamp(sinceAir / 5.5, 0, 1);
+        const kiteEase = kiteT * kiteT * (3 - 2 * kiteT);
+        const topEase = THREE.MathUtils.clamp(1 - (agl - 320) / 120, 0.5, 1);
+        targetPitch = THREE.MathUtils.lerp(0.25, 0.75, kiteEase) * topEase; // ~43°
+
+        // Work done by winch → gain altitude (main kite energy source)
+        // dE = T * reel_speed; put most of it into height
+        const reelSpeed = Math.max(0, -vAlong + 4); // m/s cable shortening
+        const powerW = tension * Math.max(reelSpeed, 8);
+        const climbBoost = (powerW / (mass * 9.81)) * 0.92; // m/s equivalent
+        physics.velocity.y += climbBoost * dt * 9.5;
+
+        // Keep pulling along cable (shortens radius of the kite arc)
+        physics.velocity.addScaledVector(_fwd, (tension / mass) * 0.65 * dt);
+
+        // Align flight path with pitch (positive AoA, not pure stall)
+        const horiz = Math.hypot(physics.velocity.x, physics.velocity.z);
+        const spd3 = Math.max(12, physics.velocity.length());
+        const wantPath = Math.min(targetPitch * 0.78, 0.62);
+        const pathNow = Math.atan2(physics.velocity.y, Math.max(1, horiz));
+        const pathAng = pathNow + (wantPath - pathNow) * (1 - Math.exp(-2.2 * dt));
+        const hSpd = Math.cos(pathAng) * spd3;
+        physics.velocity.x *= 0.9;
+        physics.velocity.z = -Math.abs(hSpd);
+        physics.velocity.y = Math.max(physics.velocity.y, Math.sin(pathAng) * spd3);
+
+        // Soft speed floor so the kite doesn't fall out of the air
+        const spdNow = physics.velocity.length();
+        if (spdNow < 14 && agl < 350) {
+          physics.velocity.multiplyScalar(14 / Math.max(spdNow, 1));
+        }
+      }
+
+      // Auto-release near top of useful launch
+      if (agl > 360 || (sinceAir > 12 && agl > 200) || (t > 20 && agl > 120)) {
+        releaseLaunch(physics);
+        return;
+      }
+
+      const e = new THREE.Euler().setFromQuaternion(physics.quaternion, 'YXZ');
+      const lag = 1 - Math.exp(-(airborne ? 3.5 : 2.2) * dt);
+      e.x = THREE.MathUtils.lerp(e.x, targetPitch, lag);
+      e.z = THREE.MathUtils.lerp(e.z, 0, 1 - Math.exp(-4 * dt));
+      e.y = THREE.MathUtils.lerp(e.y, 0, 1 - Math.exp(-2.5 * dt));
+      physics.quaternion.setFromEuler(e);
+      if (physics.omega) {
+        physics.omega.x *= 0.8;
+        physics.omega.y *= 0.8;
+        physics.omega.z *= 0.7;
       }
 
       physics.airspeed = physics.velocity.length();
+      physics.tas = physics.airspeed;
     },
   },
 
@@ -756,23 +939,13 @@ export const SCENARIOS = {
     id: 'tow',
     name: 'Tow launch',
     blurb:
-      'Stay slightly below the tug, wings level. High tow slacks the rope; low/side loads the weak link. R releases.',
+      'Standing start behind the tug. Stay in low-tow after lift-off. Off-station rope yanks the nose and can abort the tow. R releases.',
     gear: 1,
     terrain: 'airfield',
     spawn() {
-      // Ideal low-tow station behind / below tug at t=0
-      const tugY = RUNWAY.y + 45;
-      const tugZ = RUNWAY.z + 20;
-      return makeSpawn(
-        0,
-        tugY - TOW_BELOW,
-        tugZ + TOW_BEHIND,
-        0,
-        2.2,
-        -28,
-        0.06,
-        0
-      );
+      // Standing start on runway behind the tug
+      const z0 = RUNWAY.z + RUNWAY.halfLength - 40;
+      return makeSpawn(0, RUNWAY.y + 1.05, z0, 0, 0, 0, 0.01, 0);
     },
     onStart(physics) {
       scenarioRuntime.phase = 'tow';
@@ -784,15 +957,29 @@ export const SCENARIOS = {
       scenarioRuntime.station = 'ok';
       scenarioRuntime.releaseReady = false;
       scenarioRuntime.weakLinkWarn = false;
+      scenarioRuntime.tugStress = 0;
+      scenarioRuntime.ropePitch = 0;
+      scenarioRuntime.ropeYaw = 0;
+      scenarioRuntime.ropeOsc = 0;
+      scenarioRuntime.towAbort = null;
+      scenarioRuntime._towAir = false;
+      scenarioRuntime._towAirT = 0;
+      scenarioRuntime._towWeakT = 0;
+      _towStretch = 0;
+      _towStretchV = 0;
+      _towOscPhase = 0;
+      _towPrevTen = 0;
+      _towSmoothTen = 0;
       updateTugState(0, 1 / 60);
       if (physics) {
         physics.suppressGround = true;
-        // Match tug climb speed roughly
-        physics.velocity.set(0, 2.2, -28);
+        physics.velocity.set(0, 0, 0);
+        if (physics.omega) physics.omega.set(0, 0, 0);
       }
     },
     /**
-     * Shared tug state + station-keeping rope forces.
+     * Aerotow from standing start: ground roll with tug → climb formation.
+     * Rope snatch / nose pull / tug abort when off-station.
      * @param {import('./physics.js').GliderPhysics} physics
      */
     update(physics, dt) {
@@ -800,102 +987,395 @@ export const SCENARIOS = {
       scenarioRuntime.t += dt;
       const t = scenarioRuntime.t;
       const agl = physics.position.y - RUNWAY.y;
+      const gndSpd = Math.hypot(physics.velocity.x, physics.velocity.z);
 
-      // Soft auto-release when high enough (manual R always works)
-      scenarioRuntime.releaseReady = agl > 280 || t > 24;
-      if (t > 36 || agl > 450) {
+      scenarioRuntime.releaseReady = agl > 280 || t > 28;
+      if (t > 45 || agl > 480) {
+        scenarioRuntime.towAbort = 'pilot';
         releaseLaunch(physics);
         return;
       }
 
-      physics.suppressGround = true;
+      // Tug first (uses current stress / station from last frame)
       updateTugState(t, dt);
+
+      // Rotate / unstick with the tug (don't stay pinned when rope goes skyward)
+      if (
+        !scenarioRuntime._towAir &&
+        (gndSpd > 17 || t >= TUG_TAKEOFF_T - 0.8 || agl > 2.5)
+      ) {
+        scenarioRuntime._towAir = true;
+        scenarioRuntime._towAirT = t;
+        // Rotate into the climb with the tug
+        physics.velocity.y = Math.max(physics.velocity.y, 4);
+        physics.position.y = Math.max(physics.position.y, RUNWAY.y + 2.2);
+      }
+      const onGround = !scenarioRuntime._towAir;
+      const airAge = onGround ? 0 : t - (scenarioRuntime._towAirT || t);
+      physics.suppressGround = true;
+      physics.rolling = false;
+      physics.grounded = false;
+
+      if (onGround) {
+        // Pin glider to deck; accelerate only via rope
+        physics.position.y = RUNWAY.y + 1.05;
+        physics.velocity.y = 0;
+        physics.velocity.x *= Math.exp(-2.5 * dt);
+        const e = new THREE.Euler().setFromQuaternion(physics.quaternion, 'YXZ');
+        e.x = THREE.MathUtils.lerp(
+          e.x,
+          gndSpd > 12 ? 0.1 : 0.02,
+          1 - Math.exp(-2 * dt)
+        );
+        e.z = THREE.MathUtils.lerp(e.z, 0, 1 - Math.exp(-2.5 * dt));
+        e.y = THREE.MathUtils.lerp(e.y, 0, 1 - Math.exp(-2 * dt));
+        physics.quaternion.setFromEuler(e);
+      } else if (airAge < 4) {
+        // Early climb: gentle match so rope doesn't snatch (no hard snaps)
+        const e = new THREE.Euler().setFromQuaternion(physics.quaternion, 'YXZ');
+        e.x = THREE.MathUtils.lerp(e.x, 0.14, 1 - Math.exp(-1.4 * dt));
+        e.z = THREE.MathUtils.lerp(e.z, 0, 1 - Math.exp(-1.8 * dt));
+        physics.quaternion.setFromEuler(e);
+        const a = 1 - Math.exp(-2.2 * dt);
+        physics.velocity.y += (scenarioRuntime.tugVel.y - physics.velocity.y) * 0.55 * a;
+        physics.velocity.z += (scenarioRuntime.tugVel.z - physics.velocity.z) * 0.4 * a;
+      }
 
       const { glider: hookG, tug: hookT } = towHooks(physics);
       _rope.copy(hookT).sub(hookG);
       const dist = Math.max(0.5, _rope.length());
       scenarioRuntime.ropeDist = dist;
-      _rope.multiplyScalar(1 / dist); // glider → tug
+      const ropeDir = _rope.clone().multiplyScalar(1 / dist); // glider → tug
 
-      // Station errors relative to ideal low-tow box behind tug
+      // —— Station box (ideal low tow) ——
       const ideal = scenarioRuntime.tugPos.clone();
       ideal.y -= TOW_BELOW;
-      ideal.z += TOW_BEHIND; // behind along +Z while tug flies −Z
-      // Account for weave: ideal lateral tracks tug X
+      ideal.z += TOW_BEHIND;
       ideal.x = scenarioRuntime.tugPos.x;
-      scenarioRuntime.stationVert = physics.position.y - ideal.y;
-      scenarioRuntime.stationLat = physics.position.x - ideal.x;
+      const vErr = physics.position.y - ideal.y;
+      const lErr = physics.position.x - ideal.x;
+      // Fore/aft station: + = too far behind
+      const longErr =
+        (physics.position.z - scenarioRuntime.tugPos.z) - TOW_BEHIND;
+      scenarioRuntime.stationVert = vErr;
+      scenarioRuntime.stationLat = lErr;
 
-      // Station label
-      const vErr = scenarioRuntime.stationVert;
-      const lErr = scenarioRuntime.stationLat;
+      // Station only enforced once airborne (ground roll is just "stay behind tug")
       let station = 'ok';
-      if (Math.abs(lErr) > 16) station = lErr > 0 ? 'right' : 'left';
-      else if (vErr > 11) station = 'high';
-      else if (vErr < -14) station = 'low';
+      if (!onGround) {
+        if (Math.abs(lErr) > 12) station = lErr > 0 ? 'right' : 'left';
+        else if (vErr > 8) station = 'high';
+        else if (vErr < -11) station = 'low';
+      }
       scenarioRuntime.station = station;
+      const offStation = station !== 'ok';
+      const offAmt = offStation
+        ? THREE.MathUtils.clamp(
+            Math.max(
+              Math.abs(vErr) / 11,
+              Math.abs(lErr) / 12,
+              Math.abs(longErr) / 15
+            ),
+            0.35,
+            2.8
+          )
+        : THREE.MathUtils.clamp(
+            Math.max(Math.abs(vErr) / 22, Math.abs(lErr) / 24),
+            0,
+            0.4
+          );
 
-      // Rope: spring-damper only when taut; high station can go slack then snatch
+      // —— Rope angle in glider body frame (pulls the nose around) ——
+      const fwdB = new THREE.Vector3(0, 0, -1).applyQuaternion(physics.quaternion);
+      const upB = new THREE.Vector3(0, 1, 0).applyQuaternion(physics.quaternion);
+      const rightB = new THREE.Vector3(1, 0, 0).applyQuaternion(physics.quaternion);
+      const rF = ropeDir.dot(fwdB);
+      const rU = ropeDir.dot(upB);
+      const rR = ropeDir.dot(rightB);
+      scenarioRuntime.ropePitch = Math.atan2(rU, Math.max(0.05, rF));
+      scenarioRuntime.ropeYaw = Math.atan2(rR, Math.max(0.05, rF));
+
+      // —— Spring-damper rope (smooth forces; off-station still swings) ——
       const restLen = scenarioRuntime.ropeRest;
       const stretch = dist - restLen;
+      const vSep = scenarioRuntime.tugVel.clone().sub(physics.velocity).dot(ropeDir);
+      _towStretch = stretch;
+      _towStretchV = vSep;
+
       const mass = 380;
       const weight = mass * 9.81;
-      let tensionN = 0;
-      scenarioRuntime.ropeSlack = stretch <= 0.35;
+      // Softer spring + more damping → less frame-to-frame snatch
+      const k = onGround
+        ? 140
+        : offStation
+          ? 220 + offAmt * 180
+          : 170;
+      const c = onGround ? 320 : offStation ? 90 + 40 * Math.max(0, 1 - offAmt) : 380;
+      let tensionRaw = 0;
+      scenarioRuntime.ropeSlack = stretch <= 0.45;
 
-      if (stretch > 0.35) {
-        const vClose = physics.velocity.dot(_rope); // + if flying toward tug
-        const k = 520;
-        const c = 200;
-        tensionN = k * stretch + c * Math.max(0, -vClose);
+      // Slower whip phase (was ~1–3 Hz → felt like vibration)
+      _towOscPhase += dt * (2.2 + offAmt * 3.5 + (offStation ? 1.2 : 0));
+      const ph = _towOscPhase;
+      const wave =
+        Math.sin(ph) * 1.0 +
+        Math.sin(ph * 1.7 + 0.4) * 0.45 +
+        Math.sin(ph * 2.4 + lErr * 0.08) * 0.2;
+      const surge = THREE.MathUtils.clamp(wave / 1.4, -1, 1);
 
-        // Station load factors: snatch after high slack; low/side continuous load
-        if (station === 'low') tensionN *= 1.15;
-        if (station === 'left' || station === 'right') tensionN *= 1.18;
-        if (station === 'high' && stretch > 5) tensionN *= 1.4;
+      if (stretch > 0.45) {
+        tensionRaw = k * stretch + c * Math.max(0, vSep);
 
-        tensionN = THREE.MathUtils.clamp(tensionN, 0, weight * 1.7);
+        if (offStation && stretch > 1.2 && vSep > 3) {
+          tensionRaw += mass * Math.min(8, vSep) * (0.55 + offAmt * 0.35);
+        }
+
+        if (offStation) {
+          // Tension still varies with station error, but without hard zero troughs
+          const amp = offAmt * weight * (0.45 + 0.35 * Math.min(1, stretch / 6));
+          const oscMul = 0.45 + 0.7 * (0.5 + 0.5 * surge); // ~0.45…1.15
+          tensionRaw = tensionRaw * oscMul + amp * Math.max(0, 0.15 + 0.55 * surge);
+          if (surge < -0.5) {
+            tensionRaw *= THREE.MathUtils.clamp(0.35 + (surge + 1) * 0.4, 0.3, 0.75);
+          }
+          scenarioRuntime.ropeOsc = THREE.MathUtils.clamp(
+            offAmt * 0.4 + Math.abs(surge) * 0.35,
+            0,
+            1
+          );
+        } else {
+          scenarioRuntime.ropeOsc *= Math.exp(-3 * dt);
+          _towOscPhase *= 0.995;
+        }
+
+        if (station === 'low') tensionRaw *= 1.12 + Math.min(0.4, -vErr / 32);
+        if (station === 'left' || station === 'right') {
+          tensionRaw *= 1.12 + Math.min(0.35, Math.abs(lErr) / 40);
+        }
+        if (station === 'high') {
+          if (stretch < 2.5) tensionRaw *= 0.35;
+          else tensionRaw *= 1.35 + Math.min(0.55, stretch / 14);
+        }
+
+        tensionRaw = THREE.MathUtils.clamp(tensionRaw, 0, weight * 2.0);
+
+        if (onGround) {
+          tensionRaw = Math.min(tensionRaw, weight * 1.0);
+        } else if (airAge < 5) {
+          tensionRaw = Math.min(tensionRaw, weight * 1.25);
+        } else if (!offStation) {
+          tensionRaw = Math.min(tensionRaw, weight * 1.2);
+        }
+
+        // Low-pass: apply smoothed tension so velocity/omega don't step
+        const tenTau = offStation ? 6 : 10; // 1/s — faster response off-station
+        const tenAlpha = 1 - Math.exp(-tenTau * dt);
+        _towSmoothTen += (tensionRaw - _towSmoothTen) * tenAlpha;
+        const tensionN = _towSmoothTen;
+
         scenarioRuntime.ropeTension = THREE.MathUtils.clamp(
           tensionN / (weight * WEAK_LINK_G),
           0,
-          1.2
+          1.45
         );
         scenarioRuntime.weakLinkWarn = tensionN > weight * WARN_G;
 
-        if (tensionN > weight * WEAK_LINK_G) {
+        const overload =
+          !onGround &&
+          airAge >= 5 &&
+          offStation &&
+          offAmt > 0.85 &&
+          tensionN > weight * WEAK_LINK_G;
+        if (overload) {
+          scenarioRuntime._towWeakT = (scenarioRuntime._towWeakT || 0) + dt;
+        } else {
+          scenarioRuntime._towWeakT = Math.max(
+            0,
+            (scenarioRuntime._towWeakT || 0) - dt * 1.5
+          );
+        }
+        if ((scenarioRuntime._towWeakT || 0) > 1.1) {
           scenarioRuntime.station = 'danger';
+          scenarioRuntime.towAbort = 'weaklink';
           releaseLaunch(physics, { weakLink: true });
           return;
         }
 
-        // Force along rope toward tug + pitch/roll couples from bad station
-        physics.velocity.addScaledVector(_rope, (tensionN / mass) * dt);
+        // —— Pull along rope (primary force) ——
+        const tenNorm = tensionN / weight;
+        const pullGain = offStation ? 1.15 + offAmt * 0.45 : 0.85;
+        physics.velocity.addScaledVector(
+          ropeDir,
+          (tensionN / mass) * pullGain * dt
+        );
+
+        // Speed eases with tension off-station — no per-frame hard scale jumps
+        if (offStation && !onGround) {
+          const tugSpd = Math.max(10, scenarioRuntime.tugVel.length());
+          const tenSpd =
+            tugSpd *
+            (0.55 + 0.45 * Math.min(1.4, tenNorm) + 0.08 * Math.max(0, tenNorm - 1));
+          const spdTarget = tenSpd * (0.9 + 0.18 * (0.5 + 0.5 * surge));
+          const spdNow = Math.max(1, physics.velocity.length());
+          // Gentle chase (~1–2 s time constant)
+          const lag = 1 - Math.exp(-(1.2 + offAmt * 0.8) * dt);
+          const scale = 1 + ((spdTarget - spdNow) / spdNow) * lag;
+          physics.velocity.multiplyScalar(
+            THREE.MathUtils.clamp(scale, 0.94, 1.08)
+          );
+          // Soft caps
+          const s2 = physics.velocity.length();
+          const spdCapHi = tugSpd * (1.25 + offAmt * 0.12);
+          if (s2 > spdCapHi) {
+            physics.velocity.multiplyScalar(
+              1 - (1 - spdCapHi / s2) * (1 - Math.exp(-3 * dt))
+            );
+          }
+        }
+
+        // Mild snatch response from rising tension (no multi-m/s frame kicks)
+        const dTen = (tensionN - _towPrevTen) / Math.max(dt, 1e-3);
+        _towPrevTen = tensionN;
+        if (offStation && dTen > weight * 2.5) {
+          const kick = Math.min(4, (dTen / weight) * 0.35) * (0.5 + offAmt * 0.35);
+          physics.velocity.addScaledVector(ropeDir, kick * dt * 8);
+          if (physics.omega) {
+            physics.omega.z += scenarioRuntime.ropePitch * kick * 0.12 * dt * 10;
+            physics.omega.y += -scenarioRuntime.ropeYaw * kick * 0.1 * dt * 10;
+          }
+        } else if (offStation && dTen < -weight * 3) {
+          // Gradual unload bleed
+          const drop = Math.min(0.06, (-dTen / weight) * 0.012) * dt * 4;
+          physics.velocity.multiplyScalar(1 - drop);
+        }
+
+        // —— Moments from smoothed rope force ——
+        const rHook = fwdB.clone().multiplyScalar(2.2).addScaledVector(upB, -0.15);
+        const F = ropeDir.clone().multiplyScalar(tensionN);
+        const torque = new THREE.Vector3().crossVectors(rHook, F);
+        const mPitch = torque.dot(rightB) / (mass * 11);
+        const mYaw = torque.dot(upB) / (mass * 12);
+        const mRoll = torque.dot(fwdB) / (mass * 14);
+
+        const mScale = offStation
+          ? (0.55 + offAmt * 0.55) * (0.55 + scenarioRuntime.ropeTension * 0.7)
+          : 0.28 * (0.5 + scenarioRuntime.ropeTension);
+        const oscKick = offStation
+          ? 1 + scenarioRuntime.ropeOsc * Math.sin(_towOscPhase) * 0.45
+          : 1;
+
         if (physics.omega) {
-          if (vErr > 8) physics.omega.z -= 0.5 * dt * Math.min(1, vErr / 16);
-          if (vErr < -10) physics.omega.z += 0.35 * dt * Math.min(1, -vErr / 16);
-          if (Math.abs(lErr) > 10) {
-            physics.omega.x += Math.sign(lErr) * 0.3 * dt;
+          physics.omega.z += mPitch * mScale * oscKick * 2.4 * dt;
+          physics.omega.y += mYaw * mScale * oscKick * 2.1 * dt;
+          physics.omega.x += mRoll * mScale * oscKick * 1.5 * dt;
+          // Rope angle bias (milder)
+          physics.omega.z +=
+            scenarioRuntime.ropePitch * (offStation ? 0.9 : 0.22) * Math.min(1.2, offAmt) * dt * 2;
+          physics.omega.y +=
+            -scenarioRuntime.ropeYaw *
+            (offStation ? 1.0 : 0.25) *
+            (0.6 + Math.min(1, offAmt)) *
+            dt *
+            2;
+          physics.omega.x +=
+            Math.sign(scenarioRuntime.ropeYaw || lErr || 1) *
+            Math.min(0.9, Math.abs(scenarioRuntime.ropeYaw) * 1.2 + Math.abs(lErr) * 0.04) *
+            (offStation ? 0.7 : 0.2) *
+            Math.min(1.2, offAmt) *
+            dt *
+            1.6;
+
+          if (offStation) {
+            const buffet = (0.35 + offAmt * 0.35) * scenarioRuntime.ropeOsc;
+            physics.omega.z += Math.sin(ph) * buffet * 1.1 * dt * 3;
+            physics.omega.y += Math.sin(ph * 1.3 + 0.5) * buffet * 0.9 * dt * 2.5;
+            physics.omega.x += Math.sin(ph * 0.9 + 1.1) * buffet * 0.7 * dt * 2.5;
+            physics.omega.y +=
+              -Math.sign(lErr) * Math.min(0.8, Math.abs(lErr) / 16) * dt * 2;
+            physics.omega.x +=
+              Math.sign(lErr) * Math.min(0.65, Math.abs(lErr) / 18) * dt * 1.8;
+            physics.omega.z +=
+              Math.sign(vErr) * Math.min(0.75, Math.abs(vErr) / 16) * dt * 1.8;
+            // Light wash-out only when thrashing hard
+            if (offAmt > 1.0) {
+              physics.omega.multiplyScalar(1 - Math.min(0.25, (offAmt - 1) * 0.12) * dt * 6);
+            }
           }
         }
       } else {
-        scenarioRuntime.ropeTension = 0;
+        // Slack: ease tension down, don't zero force in one frame
+        const slackAlpha = 1 - Math.exp(-8 * dt);
+        _towSmoothTen += (0 - _towSmoothTen) * slackAlpha;
+        scenarioRuntime.ropeTension = THREE.MathUtils.clamp(
+          _towSmoothTen / (weight * WEAK_LINK_G),
+          0,
+          1.45
+        );
         scenarioRuntime.weakLinkWarn = false;
-        // High tow with slack: gentle sink cue
+        scenarioRuntime.ropeOsc = offStation
+          ? Math.max(scenarioRuntime.ropeOsc * Math.exp(-1.2 * dt), 0.15)
+          : scenarioRuntime.ropeOsc * Math.exp(-1.5 * dt);
+        _towPrevTen = _towSmoothTen;
+        if (offStation && !onGround) {
+          physics.velocity.multiplyScalar(1 - Math.min(0.35, 0.12 + offAmt * 0.08) * dt * 3);
+          physics.velocity.y -= 0.9 * dt;
+        }
         if (station === 'high') {
           physics.velocity.y -= 1.4 * dt;
+          if (physics.omega) {
+            physics.omega.z -= 0.25 * dt;
+            physics.omega.z += Math.sin(_towOscPhase * 0.5) * offAmt * 0.35 * dt * 2;
+          }
         }
       }
 
-      // Mild formation assist when roughly on station (still punish extremes)
-      if (station === 'ok' || (station === 'low' && vErr > -18)) {
+      // —— Formation assist when on-station (calm box) ——
+      if (station === 'ok') {
         const a = 1 - Math.exp(-2.2 * dt);
-        physics.velocity.y += (scenarioRuntime.tugVel.y - physics.velocity.y) * 0.55 * a;
-        physics.velocity.z += (scenarioRuntime.tugVel.z - physics.velocity.z) * 0.4 * a;
-        physics.velocity.x += (scenarioRuntime.tugVel.x - physics.velocity.x) * 0.35 * a;
+        physics.velocity.y +=
+          (scenarioRuntime.tugVel.y - physics.velocity.y) * 0.65 * a;
+        physics.velocity.z +=
+          (scenarioRuntime.tugVel.z - physics.velocity.z) * 0.48 * a;
+        physics.velocity.x +=
+          (scenarioRuntime.tugVel.x - physics.velocity.x) * 0.42 * a;
+      } else if (scenarioRuntime.ropeTension < 0.12 && station !== 'high') {
+        physics.velocity.y -= 0.6 * dt;
       }
 
-      // Danger band near weak link even if not broken
+      // —— Tug distress → abort (needs sustained bad flying) ——
+      const sideLoad = Math.abs(lErr) / 22 + Math.abs(scenarioRuntime.ropeYaw) * 1.1;
+      const vertLoad =
+        Math.max(0, -vErr - 4) / 14 +
+        Math.max(0, vErr - 10) / 20 +
+        Math.max(0, scenarioRuntime.ropePitch - 0.35) * 1.0;
+      const tenLoad = Math.max(0, scenarioRuntime.ropeTension - 0.35);
+      const distress =
+        (sideLoad * 0.5 + vertLoad * 0.45 + tenLoad * 0.7) *
+        (offStation ? 1.45 : 0.08);
+      // Only accumulate serious stress when clearly off-station
+      if (offStation && offAmt > 0.55 && distress > 0.45) {
+        scenarioRuntime.tugStress = Math.min(
+          1.15,
+          scenarioRuntime.tugStress + distress * 0.22 * dt
+        );
+      } else {
+        scenarioRuntime.tugStress = Math.max(
+          0,
+          scenarioRuntime.tugStress - 0.35 * dt
+        );
+      }
+
+      if (scenarioRuntime.tugStress >= TUG_ABORT_STRESS) {
+        scenarioRuntime.station = 'danger';
+        scenarioRuntime.towAbort = 'tug_abort';
+        scenarioRuntime.weakLinkWarn = true;
+        // Tug releases the glider (not necessarily weak-link snap)
+        releaseLaunch(physics, { tugAbort: true });
+        return;
+      }
+
       if (scenarioRuntime.weakLinkWarn) scenarioRuntime.station = 'danger';
+      else if (scenarioRuntime.tugStress > 0.55) scenarioRuntime.station = 'upset';
     },
   },
 
@@ -977,15 +1457,24 @@ export function releaseLaunch(physics, opts = {}) {
   const wasPhase = scenarioRuntime.phase;
   scenarioRuntime.released = true;
   scenarioRuntime.phase = 'flight';
+  if (opts.tugAbort) scenarioRuntime.towAbort = scenarioRuntime.towAbort || 'tug_abort';
+  if (opts.weakLink) scenarioRuntime.towAbort = 'weaklink';
   if (physics) {
     physics.suppressGround = false;
     // Mild slack on release so you don't keep the full pull vector
     if (physics.velocity.y > 12) {
       physics.velocity.y *= 0.85;
     }
+    // Snatch release: leftover rope whip on the nose
+    if (wasPhase === 'tow' && physics.omega && (opts.weakLink || opts.tugAbort)) {
+      physics.omega.z += (Math.random() - 0.3) * 0.8;
+      physics.omega.y += (Math.random() - 0.5) * 0.6;
+      physics.velocity.y += (Math.random() - 0.2) * 2;
+    }
   }
   // Cable / tow release snap (or weak-link pop)
   if (opts.weakLink) flightAudio.playWeakLink();
+  else if (opts.tugAbort) flightAudio.playWeakLink(); // sharp cutaway
   else if (wasPhase === 'winch' || wasPhase === 'tow') flightAudio.playCableRelease();
   return true;
 }
