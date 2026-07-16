@@ -162,6 +162,11 @@ export class GliderPhysics {
     this.wind.set(0, 0, 0);
     this.landingQuality = 'crash';
     this.onRunway = false;
+    this.touchSink = 0;
+    this.touchBank = 0;
+    this.touchX = 0;
+    this.touchZ = 0;
+    this.touchSpd = 0;
     this._gearCompress = 0;
     this.energyHeight = spawn.position.y + spawn.velocity.lengthSq() / (2 * G);
   }
