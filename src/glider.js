@@ -641,7 +641,7 @@ export function createGlider() {
   elevHinge.add(elevator);
   addEdges(elevator, 12);
 
-  // —— 3D cockpit (FP) — simple low-poly sailplane interior ——
+  // —— 3D cockpit (FP / XR) — simple low-poly sailplane interior ——
   const cockpit = buildCockpitInterior({ white, offWhite, dark, red, accent });
   root.add(cockpit);
   root.userData.stickPivot = cockpit.userData.stickPivot;
@@ -650,7 +650,6 @@ export function createGlider() {
 
   const camAnchor = new THREE.Object3D();
   camAnchor.name = 'pilotCam';
-  // Clean eye; coaming is 2D concept overlay (not a 3D tub)
   camAnchor.position.set(0, 0.42, 0.05);
   root.add(camAnchor);
 
@@ -682,25 +681,222 @@ export function createGlider() {
 }
 
 /**
- * Minimal 3D cockpit anchors only — visual coaming is the 2D concept-art SVG.
- * Stick/lever groups exist so animation hooks keep working if re-enabled later.
+ * Instrument panel face: rectangular body with parabolic curved top.
+ * Local shape XY (bottom at y=0), extruded in +Z (thickness).
  */
-function buildCockpitInterior(_mats) {
+function makeCurvedPanelGeo({
+  width = 0.84,
+  baseH = 0.17,
+  arch = 0.11,
+  depth = 0.045,
+  segs = 18,
+} = {}) {
+  const halfW = width * 0.5;
+  const shape = new THREE.Shape();
+  shape.moveTo(-halfW, 0);
+  shape.lineTo(halfW, 0);
+  shape.lineTo(halfW, baseH);
+  // Curved top: right → left, y = baseH + arch·(1 − (x/halfW)²)
+  for (let i = segs - 1; i >= 0; i--) {
+    const u = i / segs;
+    const x = -halfW + u * width;
+    const t = x / halfW;
+    shape.lineTo(x, baseH + arch * (1 - t * t));
+  }
+  shape.lineTo(-halfW, 0);
+
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: false,
+    steps: 1,
+    curveSegments: segs,
+  });
+  // Center horizontally; sit bottom near origin; thickness about Z=0
+  geo.translate(0, 0, -depth * 0.5);
+  return geo;
+}
+
+/** Thin rim along the curved top edge of the panel (coaming lip). */
+function makeCurvedPanelLipGeo({
+  width = 0.84,
+  baseH = 0.17,
+  arch = 0.11,
+  lipH = 0.028,
+  depth = 0.055,
+  segs = 18,
+} = {}) {
+  const halfW = width * 0.5;
+  const shape = new THREE.Shape();
+  // Outer curve (top) right → left, then inner curve left → right
+  const yAt = (x) => baseH + arch * (1 - (x / halfW) * (x / halfW));
+  shape.moveTo(halfW, yAt(halfW));
+  for (let i = segs - 1; i >= 0; i--) {
+    const u = i / segs;
+    const x = -halfW + u * width;
+    shape.lineTo(x, yAt(x) + lipH);
+  }
+  for (let i = 0; i <= segs; i++) {
+    const u = i / segs;
+    const x = -halfW + u * width;
+    shape.lineTo(x, yAt(x));
+  }
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: false,
+    steps: 1,
+    curveSegments: segs,
+  });
+  geo.translate(0, 0, -depth * 0.5);
+  return geo;
+}
+
+/**
+ * Simple low-poly sailplane cockpit for first-person / XR.
+ * Open forward view; coaming, panel, seat, stick, levers, wing roots.
+ * Local: +Y up, −Z nose, +X right. Eye ~ (0, 0.45, 0).
+ */
+function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
   const cockpit = new THREE.Group();
   cockpit.name = 'cockpitInterior';
-  // Invisible pivots (SVG draws stick/levers; 3D stays empty for clean FP)
+
+  const w = white || fillMaterial({ color: 0xf7f7fa });
+  const off = offWhite || fillMaterial({ color: 0xe8e8ee });
+  const dk = dark || fillMaterial({ color: 0x2a2a30 });
+  const acc = accent || fillMaterial({ color: 0xe85d3a });
+  // Opaque red for stick grip / accents (exterior control red is translucent)
+  const gripMat = fillMaterial({ color: 0xc45a48 });
+
+  const addPart = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.rotation.set(rx, ry, rz);
+    cockpit.add(m);
+    addEdges(m, 14);
+    return m;
+  };
+
+  // —— Floor / tub ——
+  addPart(new THREE.BoxGeometry(0.92, 0.05, 1.15), off, 0, -0.42, 0.12);
+  // Footwells (slight step)
+  addPart(new THREE.BoxGeometry(0.34, 0.04, 0.45), off, -0.22, -0.38, -0.25);
+  addPart(new THREE.BoxGeometry(0.34, 0.04, 0.45), off, 0.22, -0.38, -0.25);
+
+  // —— Side walls (low — keep view out) ——
+  for (const s of [-1, 1]) {
+    addPart(new THREE.BoxGeometry(0.06, 0.42, 1.05), w, s * 0.48, -0.18, 0.08);
+    // Coaming rail on top of wall
+    addPart(new THREE.BoxGeometry(0.1, 0.05, 1.0), off, s * 0.5, 0.05, 0.05);
+  }
+  // Rear bulkhead behind seat
+  addPart(new THREE.BoxGeometry(0.95, 0.55, 0.06), w, 0, -0.12, 0.62);
+
+  // —— Seat ——
+  addPart(new THREE.BoxGeometry(0.42, 0.06, 0.4), off, 0, -0.3, 0.28);
+  addPart(new THREE.BoxGeometry(0.4, 0.38, 0.06), off, 0, -0.08, 0.48);
+  // Simple seat pad stripe
+  addPart(new THREE.BoxGeometry(0.36, 0.03, 0.32), dk, 0, -0.26, 0.28);
+
+  // —— Instrument panel shelf (below eye, opens forward view) ——
+  addPart(new THREE.BoxGeometry(0.88, 0.05, 0.28), w, 0, 0.02, -0.55);
+  // Panel face with curved top (parabola arch), tilted toward pilot
+  const panelTilt = -0.18;
+  const panel = new THREE.Mesh(makeCurvedPanelGeo(), dk);
+  panel.position.set(0, 0.08, -0.66);
+  panel.rotation.x = panelTilt;
+  cockpit.add(panel);
+  addEdges(panel, 10);
+  // Thin coaming lip following the same curve (highlights the arch)
+  const lip = new THREE.Mesh(makeCurvedPanelLipGeo(), off);
+  lip.position.set(0, 0.08, -0.66);
+  lip.rotation.x = panelTilt;
+  cockpit.add(lip);
+  addEdges(lip, 12);
+  // Three simple “gauges” as cylinders on the panel
+  for (const gx of [-0.24, 0, 0.24]) {
+    const gauge = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.02, 10),
+      off
+    );
+    gauge.rotation.x = Math.PI / 2 + panelTilt;
+    gauge.position.set(gx, 0.13, -0.64);
+    cockpit.add(gauge);
+    addEdges(gauge, 20);
+    // Needle stub
+    const needle = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.04, 0.004), acc);
+    needle.position.set(gx, 0.14, -0.63);
+    needle.rotation.x = panelTilt;
+    cockpit.add(needle);
+  }
+
+  // —— Nose deck / glareshield (keeps horizon framed) ——
+  addPart(new THREE.BoxGeometry(0.7, 0.04, 0.55), w, 0, 0.0, -0.95);
+  // Center spine toward nose
+  addPart(new THREE.BoxGeometry(0.08, 0.03, 0.7), off, 0, 0.04, -1.05);
+
+  // —— Wing roots (visible when exterior wings hidden in FP) ——
+  for (const s of [-1, 1]) {
+    const root = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.55), w);
+    root.position.set(s * 1.05, -0.02, -0.15);
+    root.rotation.z = s * 0.12; // slight dihedral hint
+    root.rotation.y = s * -0.04;
+    cockpit.add(root);
+    addEdges(root, 12);
+  }
+
+  // —— Control stick ——
   const stickPivot = new THREE.Group();
   stickPivot.name = 'stickPivot';
-  stickPivot.visible = false;
+  stickPivot.position.set(0, -0.28, 0.05);
   cockpit.add(stickPivot);
+  const stickBase = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.1), dk);
+  stickBase.position.y = -0.02;
+  stickPivot.add(stickBase);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.38, 6), dk);
+  shaft.position.y = 0.18;
+  stickPivot.add(shaft);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.05), gripMat);
+  grip.position.y = 0.38;
+  stickPivot.add(grip);
+  addEdges(stickBase, 12);
+  addEdges(shaft, 18);
+  addEdges(grip, 12);
+
+  // —— Airbrake lever (left) ——
   const brakeLever = new THREE.Group();
   brakeLever.name = 'brakeLever';
-  brakeLever.visible = false;
+  brakeLever.position.set(-0.38, -0.12, -0.15);
   cockpit.add(brakeLever);
+  const brakeMount = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.08), dk);
+  brakeLever.add(brakeMount);
+  const brakeArm = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.16, 0.025), acc);
+  brakeArm.position.set(0, 0.08, 0);
+  brakeLever.add(brakeArm);
+  const brakeKnob = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 5), gripMat);
+  brakeKnob.position.set(0, 0.17, 0);
+  brakeLever.add(brakeKnob);
+  addEdges(brakeMount, 12);
+  addEdges(brakeArm, 12);
+
+  // —— Gear lever (right) ——
   const gearLever = new THREE.Group();
   gearLever.name = 'gearLever';
-  gearLever.visible = false;
+  gearLever.position.set(0.38, -0.12, -0.15);
   cockpit.add(gearLever);
+  const gearMount = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.08), dk);
+  gearLever.add(gearMount);
+  const gearArm = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.16, 0.025), w);
+  gearArm.position.set(0, 0.08, 0);
+  gearLever.add(gearArm);
+  const gearKnob = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 5), dk);
+  gearKnob.position.set(0, 0.17, 0);
+  gearLever.add(gearKnob);
+  addEdges(gearMount, 12);
+  addEdges(gearArm, 12);
+
+  // —— Pedal boxes (simple) ——
+  addPart(new THREE.BoxGeometry(0.12, 0.04, 0.14), dk, -0.18, -0.36, -0.42);
+  addPart(new THREE.BoxGeometry(0.12, 0.04, 0.14), dk, 0.18, -0.36, -0.42);
+
   cockpit.userData.stickPivot = stickPivot;
   cockpit.userData.brakeLever = brakeLever;
   cockpit.userData.gearLever = gearLever;
@@ -789,7 +985,7 @@ export function getWheelMesh(glider) {
 }
 
 /**
- * Cockpit camera: show 3D interior (with concept wing roots / nose spine);
+ * Cockpit camera: show simple 3D interior + wing roots;
  * hide exterior airframe / canopy glass. Chase: full glider, hide interior.
  */
 export function setCockpitVisible(glider, cockpitMode) {
@@ -801,7 +997,7 @@ export function setCockpitVisible(glider, cockpitMode) {
 
   if (cockpitMode) {
     if (c) c.visible = true;
-    // Exterior wings hidden — cockpit has its own wing-root props
+    // Exterior wings hidden — cockpit draws its own wing-root stubs
     if (wings) wings.visible = false;
     if (canopyObj) canopyObj.visible = false;
     if (fuse) {

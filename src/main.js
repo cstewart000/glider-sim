@@ -387,11 +387,10 @@ function updateCamera(dt, renderPos, renderQuat) {
   const mode = rolling ? 1 : cameraMode;
 
   if (mode === 0) {
-    // First-person: hide airframe; concept coaming is the 2D SVG overlay
+    // First-person: 3D cockpit tub; hide 2D SVG coaming (avoids double drawing)
     setCockpitVisible(gliderMesh, true);
     gliderMesh.visible = true;
-    // Full concept coaming when looking forward; clear when looking out
-    setCockpitOverlayVisible(!lookingAway && !isXRPresenting());
+    setCockpitOverlayVisible(false);
 
     cockpitEyeFromPose(pos, quat, camPos);
 
@@ -403,15 +402,14 @@ function updateCamera(dt, renderPos, renderQuat) {
     _lookDir.applyQuaternion(_lookPitchQ);
 
     camTarget.copy(camPos).addScaledVector(_lookDir, 100);
-    // Level-ish look — coaming is drawn in 2D, not forced by camera pitch
     if (!lookingAway) camTarget.addScaledVector(_up, -0.05);
 
     camera.position.copy(camPos);
     camera.up.copy(_up);
     camera.lookAt(camTarget);
-    camera.near = 0.1;
+    camera.near = 0.08;
     camera.far = Math.max(camera.far || 3000, 3000);
-    camera.fov = lookingAway ? 75 : 60;
+    camera.fov = lookingAway ? 75 : 62;
     camera.updateProjectionMatrix();
   } else if (mode === 1) {
     gliderMesh.visible = true;
