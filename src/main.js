@@ -599,6 +599,11 @@ function tick(_time, frame) {
   // XR sticks/buttons override axes when deflected (after keyboard)
   updateXRControls();
 
+  // M: return to scenario menu (in flight, after landing, or during result hold)
+  if (controls.menu && (running || ended)) {
+    returnToScenarioMenu();
+  }
+
   // R / XR B-Y: release winch/tow if attached; else restart; after landing → menu
   if (controls.restart && !isResultHoldActive()) {
     if (ended) {

@@ -299,28 +299,67 @@
 
       <div id="title-screen">
         <div class="panel panel-wide">
-          <h1>LOW POLY GLIDER</h1>
-          <p class="tagline">Wireframe soaring · monochrome skies</p>
+          <header class="title-header">
+            <h1>LOW POLY GLIDER</h1>
+            <p class="tagline">Wireframe soaring · monochrome skies</p>
+          </header>
 
-          <p class="scenario-heading">SCENARIO</p>
-          <div id="scenario-list" class="scenario-list" role="listbox" aria-label="Scenarios">
-            <!-- filled by JS -->
-          </div>
-          <p id="scenario-blurb" class="tip"></p>
+          <section class="menu-section" aria-labelledby="scenario-heading">
+            <h2 id="scenario-heading" class="menu-heading">Scenario</h2>
+            <div id="scenario-list" class="scenario-list" role="listbox" aria-label="Scenarios">
+              <!-- filled by JS -->
+            </div>
+            <p id="scenario-blurb" class="scenario-blurb"></p>
+          </section>
 
-          <ul class="controls">
-            <li><kbd>W</kbd> Nose down · <kbd>S</kbd> Nose up</li>
-            <li><kbd>A</kbd><kbd>D</kbd> Roll · <kbd>Q</kbd><kbd>E</kbd> Rudder</li>
-            <li><kbd>Space</kbd> Airbrakes · <kbd>G</kbd> Gear · <kbd>C</kbd> Camera</li>
-            <li><kbd>R</kbd> Release cable / tow · Restart (free flight)</li>
-            <li><kbd>1</kbd>–<kbd>9</kbd> Look out (5 = forward)</li>
-            <li class="vr-tip"><strong>VR</strong> Right stick pitch/roll · Left stick rudder · Trigger brakes · A gear · B release</li>
-          </ul>
+          <section class="menu-section" aria-labelledby="keys-heading">
+            <h2 id="keys-heading" class="menu-heading">Keys</h2>
+            <div class="keys-grid">
+              <div class="key-row">
+                <span class="key-group"><kbd>W</kbd><kbd>S</kbd></span>
+                <span class="key-label">Pitch</span>
+              </div>
+              <div class="key-row">
+                <span class="key-group"><kbd>A</kbd><kbd>D</kbd></span>
+                <span class="key-label">Roll</span>
+              </div>
+              <div class="key-row">
+                <span class="key-group"><kbd>Q</kbd><kbd>E</kbd></span>
+                <span class="key-label">Rudder</span>
+              </div>
+              <div class="key-row">
+                <span class="key-group"><kbd>Space</kbd></span>
+                <span class="key-label">Airbrakes</span>
+              </div>
+              <div class="key-row">
+                <span class="key-group"><kbd>G</kbd></span>
+                <span class="key-label">Gear</span>
+              </div>
+              <div class="key-row">
+                <span class="key-group"><kbd>C</kbd></span>
+                <span class="key-label">Camera</span>
+              </div>
+              <div class="key-row">
+                <span class="key-group"><kbd>R</kbd></span>
+                <span class="key-label">Release / restart</span>
+              </div>
+              <div class="key-row">
+                <span class="key-group"><kbd>M</kbd></span>
+                <span class="key-label">Main menu</span>
+              </div>
+              <div class="key-row key-row-wide">
+                <span class="key-group"><kbd>1</kbd>–<kbd>9</kbd></span>
+                <span class="key-label">Look (5 forward)</span>
+              </div>
+            </div>
+            <p class="vr-tip"><strong>VR</strong> Right stick pitch/roll · Left rudder · Trigger brakes · A gear · B release</p>
+          </section>
+
           <div class="title-actions">
             <button id="start-btn">LAUNCH</button>
             <div id="vr-button-host"></div>
           </div>
-          <p class="tip vr-https-tip">Quest: open this page over <b>HTTPS</b> or <code>adb reverse tcp:5173 tcp:5173</code> then use <code>http://localhost:5173</code>.</p>
+          <p class="tip vr-https-tip">Quest: <b>HTTPS</b> or <code>adb reverse tcp:5173 tcp:5173</code> → <code>http://localhost:5173</code></p>
         </div>
       </div>
 
@@ -335,7 +374,10 @@
           <h2 id="crash-title">LANDED</h2>
           <p id="crash-msg"></p>
           <p id="flight-stats"></p>
-          <button id="restart-btn">FLY AGAIN</button>
+          <div class="title-actions">
+            <button id="restart-btn">MENU</button>
+          </div>
+          <p class="tip result-hint"><kbd>M</kbd> or button · back to scenarios</p>
         </div>
       </div>
     </div>

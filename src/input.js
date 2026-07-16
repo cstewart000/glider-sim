@@ -14,6 +14,8 @@ export const controls = {
   gear: 1,
   cameraToggle: false,
   restart: false,
+  /** Return to scenario menu (edge) */
+  menu: false,
   gearToggle: false,
   /**
    * Cockpit look pad 1–9 (sticky). Layout:
@@ -35,6 +37,7 @@ const map = {
   Space: 'brakes',
   KeyC: 'camera',
   KeyR: 'restart',
+  KeyM: 'menu',
   KeyG: 'gear',
 };
 
@@ -73,6 +76,7 @@ export function initInput() {
 
 let camLatched = false;
 let restartLatched = false;
+let menuLatched = false;
 let gearLatched = false;
 
 export function updateInput() {
@@ -98,6 +102,15 @@ export function updateInput() {
   } else {
     controls.restart = false;
     if (!keys.restart) restartLatched = false;
+  }
+
+  // M → scenario menu (always edge-triggered)
+  if (keys.menu && !menuLatched) {
+    controls.menu = true;
+    menuLatched = true;
+  } else {
+    controls.menu = false;
+    if (!keys.menu) menuLatched = false;
   }
 
   // G toggles gear up / down

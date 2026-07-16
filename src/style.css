@@ -645,7 +645,7 @@ html, body, #app {
   gap: 10px;
   justify-content: center;
   align-items: center;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 #vr-button-host {
   display: inline-flex;
@@ -677,21 +677,29 @@ html, body, #app {
   color: #6a3030;
 }
 .vr-tip {
-  font-size: 12px;
-  color: #4a7080;
-  line-height: 1.35;
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: #5a7888;
+  line-height: 1.4;
+  text-align: center;
 }
 .vr-https-tip {
-  margin-top: 12px;
+  margin: 14px 0 0;
   font-size: 11px;
-  color: #6a7a88;
+  color: #7a8a98;
   line-height: 1.4;
+  text-align: center;
 }
 .vr-https-tip code {
   font-size: 10px;
   background: rgba(0, 0, 0, 0.05);
   padding: 1px 4px;
   border-radius: 3px;
+}
+.result-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #7a8a98;
 }
 /* Hide 2D coaming / dense DOM HUD chrome while in immersive VR */
 html.xr-active #cockpit-overlay,
@@ -707,22 +715,39 @@ html.xr-active #vr-button {
 }
 
 .panel {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1.5px solid rgba(40, 40, 48, 0.35);
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1.5px solid rgba(40, 40, 48, 0.28);
+  border-radius: 10px;
   padding: 36px 48px;
   max-width: 440px;
   text-align: center;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
 }
 .panel-wide {
-  max-width: 520px;
-  padding: 28px 36px 32px;
+  max-width: 480px;
+  padding: 26px 28px 22px;
 }
 
+.title-header {
+  margin-bottom: 18px;
+}
+.menu-section {
+  margin-bottom: 16px;
+  text-align: left;
+}
+.menu-heading {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #6a90a8;
+  margin: 0 0 8px;
+  font-weight: 700;
+  text-align: left;
+}
+/* legacy class still used in a few places */
 .scenario-heading {
   font-size: 11px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.18em;
   color: #6a90a8;
   margin: 8px 0 10px;
   font-weight: 700;
@@ -730,19 +755,19 @@ html.xr-active #vr-button {
 .scenario-list {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 7px;
+  margin-bottom: 8px;
 }
 .scenario-btn {
   pointer-events: auto;
   cursor: pointer;
-  border: 1.5px solid rgba(60, 160, 180, 0.35);
-  background: rgba(255, 255, 255, 0.55);
+  border: 1.5px solid rgba(60, 160, 180, 0.32);
+  background: rgba(255, 255, 255, 0.65);
   border-radius: 8px;
-  padding: 12px 10px;
-  font-size: 13px;
+  padding: 10px 8px;
+  font-size: 12.5px;
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   color: #2a4a58;
   box-shadow: none;
   transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
@@ -754,56 +779,115 @@ html.xr-active #vr-button {
   box-shadow: none;
 }
 .scenario-btn.active {
-  background: rgba(90, 200, 220, 0.2);
+  background: rgba(90, 200, 220, 0.22);
   border-color: rgba(40, 160, 180, 0.9);
   color: #145a6a;
   box-shadow: 0 0 0 1px rgba(60, 180, 200, 0.25);
 }
+.scenario-blurb {
+  min-height: 2.6em;
+  margin: 0;
+  font-size: 12.5px;
+  color: #5a7080;
+  line-height: 1.45;
+  text-align: left;
+}
+
+/* Compact key reference grid */
+.keys-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(90, 200, 220, 0.06);
+  border: 1px solid rgba(60, 160, 180, 0.18);
+}
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+.key-row-wide {
+  grid-column: 1 / -1;
+}
+.key-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  min-width: 52px;
+}
+.key-label {
+  font-size: 12.5px;
+  color: #3a4a52;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
 .panel h1 {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   color: #222228;
-  margin-bottom: 6px;
+  margin: 0 0 4px;
 }
 .panel h2 {
-  font-size: 24px;
-  letter-spacing: 0.12em;
-  margin-bottom: 12px;
+  font-size: 22px;
+  letter-spacing: 0.1em;
+  margin-bottom: 10px;
   color: #222228;
 }
 .tagline {
-  color: #6a8090;
-  font-size: 14px;
-  margin-bottom: 24px;
+  color: #7a8a98;
+  font-size: 13px;
+  margin: 0;
 }
+/* legacy list (if any remain) */
 .controls {
   list-style: none;
   text-align: left;
-  margin: 0 auto 20px;
+  margin: 0 auto 16px;
   display: inline-block;
-  font-size: 14px;
+  font-size: 13px;
   color: #3a3a42;
-  line-height: 1.9;
+  line-height: 1.75;
 }
-.controls kbd {
+.controls kbd,
+.keys-grid kbd,
+.result-hint kbd {
   display: inline-block;
-  min-width: 22px;
-  padding: 1px 6px;
-  margin: 0 2px;
-  background: rgba(90, 200, 220, 0.12);
+  min-width: 20px;
+  padding: 2px 6px;
+  margin: 0;
+  background: rgba(255, 255, 255, 0.85);
   border: 1px solid rgba(60, 160, 180, 0.45);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  text-align: center;
+  color: #1a6a7a;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  background: rgba(90, 200, 220, 0.1);
+  border: 1px solid rgba(60, 160, 180, 0.4);
   border-radius: 3px;
   font-family: inherit;
-  font-size: 12px;
-  text-align: center;
-  color: #1a7080;
+  font-size: 11px;
+  font-weight: 650;
+  color: #1a6a7a;
 }
 .tip {
   font-size: 13px;
   color: #7a8a98;
   line-height: 1.5;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 button {
   pointer-events: auto;
