@@ -112,6 +112,11 @@ export class GliderPhysics {
     this.rollDistance = 0;
     this.landingQuality = 'crash';
     this.onRunway = false;
+    this.touchSink = 0;
+    this.touchBank = 0;
+    this.touchX = 0;
+    this.touchZ = 0;
+    this.touchSpd = 0;
     /** Specific energy height: h + v²/(2g) */
     this.energyHeight = 380;
     this.ld = 0; // instantaneous L/D estimate
@@ -615,6 +620,12 @@ export class GliderPhysics {
     if (!crash) {
       this.rolling = true;
       this.grounded = true;
+      // Snapshot for debrief (any scenario, not only landing pattern)
+      this.touchSink = sink;
+      this.touchBank = bank;
+      this.touchX = this.position.x;
+      this.touchZ = this.position.z;
+      this.touchSpd = this.airspeed;
       const horiz = this.velocity.clone();
       horiz.y = 0;
       if (horiz.length() < 8) {

@@ -811,22 +811,46 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
   lip.rotation.x = panelTilt;
   cockpit.add(lip);
   addEdges(lip, 12);
-  // Three simple “gauges” as cylinders on the panel
-  for (const gx of [-0.24, 0, 0.24]) {
-    const gauge = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.055, 0.055, 0.02, 10),
+  // Three live gauges on the panel: ASI · VAR · ALT
+  const instrumentNeedles = [];
+  const gaugeXs = [-0.24, 0, 0.24];
+  for (let gi = 0; gi < 3; gi++) {
+    const gx = gaugeXs[gi];
+    const face = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.02, 12),
       off
     );
-    gauge.rotation.x = Math.PI / 2 + panelTilt;
-    gauge.position.set(gx, 0.13, -0.64);
-    cockpit.add(gauge);
-    addEdges(gauge, 20);
-    // Needle stub
-    const needle = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.04, 0.004), acc);
-    needle.position.set(gx, 0.14, -0.63);
-    needle.rotation.x = panelTilt;
-    cockpit.add(needle);
+    face.rotation.x = Math.PI / 2 + panelTilt;
+    face.position.set(gx, 0.13, -0.64);
+    cockpit.add(face);
+    addEdges(face, 20);
+    // Pivot at hub; needle points “up” in local +Y before rotation about Z
+    const pivot = new THREE.Group();
+    pivot.position.set(gx, 0.14, -0.625);
+    pivot.rotation.x = panelTilt;
+    cockpit.add(pivot);
+    const needle = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.048, 0.004), acc);
+    needle.position.set(0, 0.02, 0.012);
+    pivot.add(needle);
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.01, 6, 5), dk);
+    hub.position.set(0, 0, 0.012);
+    pivot.add(hub);
+    instrumentNeedles.push(pivot);
   }
+  // Inclinometer / slip ball under the panel
+  const slipTube = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.035, 0.03),
+    dk
+  );
+  slipTube.position.set(0, 0.02, -0.58);
+  slipTube.rotation.x = panelTilt;
+  cockpit.add(slipTube);
+  addEdges(slipTube, 12);
+  const slipBall = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6), acc);
+  slipBall.position.set(0, 0.02, -0.565);
+  cockpit.add(slipBall);
+  cockpit.userData.instrumentNeedles = instrumentNeedles; // [ASI, VAR, ALT]
+  cockpit.userData.slipBall = slipBall;
 
   // —— Nose deck / glareshield (keeps horizon framed) ——
   addPart(new THREE.BoxGeometry(0.7, 0.04, 0.55), w, 0, 0.0, -0.95);
@@ -977,6 +1001,55 @@ export function updateControlSurfaces(glider, ctrl, dt = 0.016) {
   if (gearLever) {
     const down = THREE.MathUtils.clamp(s.gear, 0, 1);
     gearLever.rotation.x = -0.15 - (1 - down) * 1.05;
+  }
+}
+
+/**
+ * Drive 3D panel needles + slip ball from flight state.
+ * @param {THREE.Object3D} glider
+ * @param {{ airspeed?: number, vario?: number, position?: { y: number }, sideslip?: number, rolling?: boolean }} physics
+ * @param {number} [dt]
+ */
+export function updateCockpitInstruments(glider, physics, dt = 0.016) {
+  const c = glider?.userData?.cockpit || glider?.getObjectByName?.('cockpitInterior');
+  if (!c || !physics) return;
+  const needles = c.userData.instrumentNeedles;
+  if (needles && needles.length >= 3) {
+    // ASI: 0–200 km/h → −120°…+120°
+    const iasKmh = Math.max(0, (physics.airspeed || 0) * 3.6);
+    const asiAng = THREE.MathUtils.clamp((iasKmh / 200) * 240 - 120, -130, 130);
+    // Vario: −8…+8 m/s → −120°…+120°
+    const vs = physics.rolling ? 0 : physics.vario || 0;
+    const varAng = THREE.MathUtils.clamp((vs / 8) * 120, -130, 130);
+    // Altimeter 1000 m cycle
+    const alt = physics.position?.y ?? 0;
+    const altAng = ((alt % 1000) / 1000) * 360;
+    const lag = 1 - Math.exp(-10 * Math.max(0.001, dt));
+    const targets = [asiAng, varAng, altAng];
+    for (let i = 0; i < 3; i++) {
+      const n = needles[i];
+      if (!n) continue;
+      // Shortest path for alt wrap
+      let cur = n.rotation.z;
+      let tgt = THREE.MathUtils.degToRad(targets[i]);
+      if (i === 2) {
+        let d = tgt - cur;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        n.rotation.z = cur + d * lag;
+      } else {
+        n.rotation.z += (tgt - cur) * lag;
+      }
+    }
+  }
+  // Slip ball: β > 0 (wind from right / skid left?) → ball left of center in standard
+  // Our β = atan2(vRight, vFwd); positive sideslip → ball moves opposite (coord turn)
+  const ball = c.userData.slipBall;
+  if (ball) {
+    const beta = physics.sideslip || 0;
+    const xTarget = THREE.MathUtils.clamp(-beta * 0.55, -0.085, 0.085);
+    const lag = 1 - Math.exp(-8 * Math.max(0.001, dt));
+    ball.position.x += (xTarget - ball.position.x) * lag;
   }
 }
 

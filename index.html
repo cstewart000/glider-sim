@@ -224,6 +224,13 @@
             <span id="hdg" class="chip-value">—</span>
             <span class="chip-unit">°</span>
           </div>
+          <!-- Slip / skid inclinometer -->
+          <div class="holo-chip" id="chip-slip" style="margin-top:10px" title="Slip ball — center in coordinated flight">
+            <span class="chip-label">SLIP</span>
+            <div id="slip-tube" aria-hidden="true">
+              <div id="slip-ball"></div>
+            </div>
+          </div>
           <div class="holo-chip" id="chip-gear" style="margin-top:10px">
             <span class="chip-label">GEAR</span>
             <span id="gear" class="chip-value">DN</span>
@@ -243,6 +250,17 @@
         <!-- Aerotow station / rope load -->
         <div id="tow-panel" class="hidden" aria-live="polite">
           <div id="tow-station">TOW · OK</div>
+          <div id="tow-station-bars" title="Formation offset (vertical / lateral)">
+            <div class="tow-bar-row">
+              <span class="tow-bar-lbl">V</span>
+              <div class="tow-bar-track"><div id="tow-bar-vert" class="tow-bar-mark"></div></div>
+            </div>
+            <div class="tow-bar-row">
+              <span class="tow-bar-lbl">L</span>
+              <div class="tow-bar-track"><div id="tow-bar-lat" class="tow-bar-mark"></div></div>
+            </div>
+          </div>
+          <div id="tow-cue" class="hidden">STAY LOW · CENTER</div>
           <div id="tow-rope">
             <span id="tow-rope-label">ROPE</span>
             <div id="tow-tension-bar"><div id="tow-tension-fill"></div></div>

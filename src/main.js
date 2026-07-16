@@ -4,7 +4,8 @@
 
 import * as THREE from 'three';
 import {
-  createGlider, setCockpitVisible, updateControlSurfaces, updateWheelSpin,
+  createGlider, setCockpitVisible, updateControlSurfaces, updateCockpitInstruments,
+  updateWheelSpin,
 } from './glider.js';
 import {
   createTerrain, terrainHeight, profileForScenario, setTerrainProfile,
@@ -32,6 +33,7 @@ import {
 } from './scenarioVisuals.js';
 import { initCockpitOverlay, updateCockpitOverlay } from './cockpitOverlay.js';
 import { initXR, updateXRRig, updateXRControls, isXRPresenting } from './xr.js';
+import { loadPrefs, savePrefs } from './prefs.js';
 
 // —— Renderer tuned for ~50fps on integrated GPUs ——
 const canvas = document.getElementById('c');
@@ -479,18 +481,19 @@ async function startFlight() {
   _physPrevQuat.copy(physics.quaternion);
   _hasPhysPrev = false;
   accumulator = 0;
-  cameraMode = 0;
+  cameraMode = 0; // always begin in cockpit; C cycles chase/far
   resetLook();
   lookYaw = 0;
   lookPitch = 0;
   gliderMesh.visible = false;
-  setCockpitOverlayVisible(!isXRPresenting());
+  setCockpitOverlayVisible(false);
   camPos.copy(physics.position).add(new THREE.Vector3(0, 0.5, 0.3));
   clouds.seedAround(physics.position);
   terrain.world.update(physics.position, true);
   running = true;
   ended = false;
   showHUD();
+  savePrefs({ scenarioId: sc.id });
 }
 
 function endFlight() {
@@ -538,8 +541,14 @@ initXR({
   camera,
   buttonHost: document.getElementById('vr-button-host') || document.body,
 });
+// Restore last scenario from prefs (falls back to ridge)
+{
+  const prefs = loadPrefs();
+  if (prefs.scenarioId) setActiveScenario(prefs.scenarioId);
+}
 setupScenarioMenu(SCENARIO_LIST, getActiveScenario().id, (id) => {
   setActiveScenario(id);
+  savePrefs({ scenarioId: id });
   // Preview world on the title screen when picking a scenario
   const sc = getActiveScenario();
   const sp = spawnForActiveScenario();
@@ -550,7 +559,7 @@ setupScenarioMenu(SCENARIO_LIST, getActiveScenario().id, (id) => {
   camera.position.copy(sp.position).add(new THREE.Vector3(40, 80, 120));
   camera.lookAt(sp.position);
 });
-// Initial world matches default scenario
+// Initial world matches active scenario (prefs-aware)
 {
   const sc = getActiveScenario();
   const sp = spawnForActiveScenario();
@@ -603,6 +612,7 @@ function tick(_time, frame) {
   }
   if (controls.cameraToggle && running && !physics.rolling && !physics.wingStrike) {
     cameraMode = (cameraMode + 1) % 3;
+    savePrefs({ cameraMode });
   }
 
   // Crash FX or post-roll hold → menu after 3s
@@ -649,6 +659,7 @@ function tick(_time, frame) {
     gliderMesh.position.copy(_renderPos);
     gliderMesh.quaternion.copy(_renderQuat);
     updateControlSurfaces(gliderMesh, controls, frameDt);
+    updateCockpitInstruments(gliderMesh, physics, frameDt);
     if (!isXRPresenting()) updateCockpitOverlay(controls, frameDt);
     if (physics.rolling) {
       // Auto gear down on touchdown for wheel contact
@@ -665,6 +676,10 @@ function tick(_time, frame) {
       flightAudio.notifyGearToggle(controls.gear);
     }
 
+    const onTow =
+      scenarioRuntime.phase === 'tow' &&
+      !scenarioRuntime.released &&
+      isLaunchAttached();
     flightAudio.update(frameDt, {
       airspeed: physics.airspeed,
       vario: physics.rolling ? 0 : physics.vario,
@@ -679,14 +694,18 @@ function tick(_time, frame) {
       brakes: controls.brakes,
       gear: controls.gear,
       gearPos: gliderMesh.userData?.surfaces?.gear ?? controls.gear,
+      ropeTension: onTow ? scenarioRuntime.ropeTension || 0 : 0,
+      ropeOsc: onTow ? scenarioRuntime.ropeOsc || 0 : 0,
+      onTow,
     });
 
     updateScenarioVisuals(getActiveScenario().id, physics, frameDt);
 
     // Rolling ends when stopped → 3s hold then menu
     if (!physics.alive) {
-      // Finalize scenario scores before leaving the sim loop
-      if (scenarioRuntime.landingActive && !scenarioRuntime.landScored) {
+      // Finalize scores before leaving the sim loop
+      if (!scenarioRuntime.landScored && !scenarioRuntime.xcActive) {
+        // Landing scenario or any free-flight arrival
         scenarioRuntime.landScore = scoreLanding(physics);
         scenarioRuntime.landScored = true;
         if (scenarioRuntime.landScore?.grade) {

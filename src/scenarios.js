@@ -357,10 +357,22 @@ export function scoreCrossCountry(physics) {
 export function scoreLanding(physics) {
   const thrZ = runwayThresholdZ();
   const len = RUNWAY.halfLength * 2;
-  const tz = scenarioRuntime.landTouchZ || physics.position.z;
-  const tx = scenarioRuntime.landTouchX || physics.position.x;
-  const sink = scenarioRuntime.landTouchSink || 0;
-  const bank = Math.abs(physics.rollAngle?.() || 0);
+  // Prefer landing-scenario samples; else physics touchdown snapshot
+  const tz =
+    scenarioRuntime.landTouchZ ||
+    physics.touchZ ||
+    physics.position.z;
+  const tx =
+    scenarioRuntime.landTouchX ||
+    physics.touchX ||
+    physics.position.x;
+  const sink =
+    scenarioRuntime.landTouchSink ||
+    physics.touchSink ||
+    0;
+  const bank = Math.abs(
+    physics.touchBank ?? physics.rollAngle?.() ?? 0
+  );
   const onRw = physics.onRunway;
   const q = physics.landingQuality;
 
@@ -445,7 +457,12 @@ export function scoreLanding(physics) {
 
   // —— Configuration ——
   let cfgPts = 15;
-  if (!scenarioRuntime.landGearOk) {
+  // landGearOk is set during landing scenario; free-flight uses physics gear / default DN
+  const gearOk =
+    scenarioRuntime.landGearOk !== undefined
+      ? !!scenarioRuntime.landGearOk
+      : true;
+  if (!gearOk) {
     cfgPts = 0;
     debrief.push('Gear was up — belly risk.');
     total -= 20;

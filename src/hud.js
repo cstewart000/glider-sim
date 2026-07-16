@@ -4,6 +4,10 @@ import { controls } from './input.js';
 import { getTerrainProfile } from './terrain.js';
 import { scenarioRuntime, isLaunchAttached } from './scenarios.js';
 
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
 const el = {
   alt: document.getElementById('alt'),
   spd: document.getElementById('spd'),
@@ -20,6 +24,10 @@ const el = {
   towStation: document.getElementById('tow-station'),
   towFill: document.getElementById('tow-tension-fill'),
   towHint: document.getElementById('tow-hint'),
+  towBarVert: document.getElementById('tow-bar-vert'),
+  towBarLat: document.getElementById('tow-bar-lat'),
+  towCue: document.getElementById('tow-cue'),
+  slipBall: document.getElementById('slip-ball'),
   landPanel: document.getElementById('landing-panel'),
   landTitle: document.getElementById('land-title'),
   landPath: document.getElementById('land-path'),
@@ -150,8 +158,10 @@ export function showLanding(physics, afterCrash = false) {
       el.crashTitle.textContent = scenarioRuntime.xcDone
         ? `TASK · ${scored.total}`
         : `XC · ${scored.total}`;
-    } else if (scored && q !== 'crash') {
-      el.crashTitle.textContent = `LANDED · ${scored.total}`;
+    } else if (scored && q !== 'crash' && scored.total != null) {
+      const label =
+        q === 'runway' ? 'RUNWAY' : q === 'good' ? 'GOOD' : q === 'rough' ? 'ROUGH' : 'LANDED';
+      el.crashTitle.textContent = `${label} · ${scored.total}`;
     } else {
       el.crashTitle.textContent = q === 'crash' ? 'CRASH' : 'LANDED';
     }
@@ -241,6 +251,13 @@ export function updateHUD(physics, dt) {
     el.ld.textContent = physics.ld > 0 && physics.ld < 80 ? physics.ld.toFixed(0) : '—';
   }
 
+  // Slip ball (HUD inclinometer) — center when coordinated
+  if (el.slipBall) {
+    const beta = physics.sideslip || 0;
+    const pct = Math.max(-42, Math.min(42, -beta * 55)); // deg → % of tube
+    el.slipBall.style.transform = `translateX(calc(-50% + ${pct}%))`;
+  }
+
   const sign = v >= 0 ? '+' : '';
   el.vario.textContent = sign + v.toFixed(1);
   el.vario.classList.remove('up', 'down');
@@ -318,6 +335,27 @@ export function updateHUD(physics, dt) {
       }
       if (el.towHint) {
         el.towHint.classList.toggle('hidden', !scenarioRuntime.releaseReady);
+      }
+      // Station offset bars: center mark = on station
+      const vErr = scenarioRuntime.stationVert || 0;
+      const lErr = scenarioRuntime.stationLat || 0;
+      const vPct = 50 + clamp((vErr / 14) * 42, -42, 42);
+      const lPct = 50 + clamp((lErr / 14) * 42, -42, 42);
+      if (el.towBarVert) el.towBarVert.style.left = `${vPct}%`;
+      if (el.towBarLat) el.towBarLat.style.left = `${lPct}%`;
+      // Coaching cue when off-station
+      if (el.towCue) {
+        let cue = '';
+        if (st === 'high') cue = 'LOWER · EASE BACK';
+        else if (st === 'low') cue = 'CLIMB · DON\'T SINK';
+        else if (st === 'left') cue = 'RIGHT RUDDER / BANK';
+        else if (st === 'right') cue = 'LEFT RUDDER / BANK';
+        else if (st === 'upset' || st === 'danger') cue = 'RELEASE IF NEEDED · R';
+        else if ((scenarioRuntime.tugStress || 0) > 0.35) cue = 'EASE THE ROPE';
+        else cue = 'LOW TOW · CENTER';
+        el.towCue.textContent = cue;
+        el.towCue.classList.toggle('hidden', false);
+        el.towCue.classList.toggle('warn', st !== 'ok');
       }
     }
   }

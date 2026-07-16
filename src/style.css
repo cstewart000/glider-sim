@@ -317,6 +317,110 @@ html, body, #app {
   color: rgba(20, 120, 100, 0.95);
 }
 #tow-hint.hidden { display: none; }
+#tow-station-bars {
+  margin: 4px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tow-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+.tow-bar-lbl {
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  color: #6a8090;
+  width: 10px;
+}
+.tow-bar-track {
+  position: relative;
+  width: 110px;
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(40, 60, 70, 0.1);
+  border: 1px solid rgba(60, 100, 120, 0.22);
+}
+.tow-bar-track::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(60, 140, 160, 0.45);
+  transform: translateX(-50%);
+}
+.tow-bar-mark {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 6px;
+  margin-left: -3px;
+  left: 50%;
+  border-radius: 2px;
+  background: rgba(40, 160, 140, 0.9);
+  transition: left 0.08s linear;
+}
+#tow-panel.warn .tow-bar-mark { background: rgba(200, 140, 40, 0.95); }
+#tow-panel.danger .tow-bar-mark { background: rgba(200, 60, 50, 0.95); }
+#tow-cue {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #3a6a78;
+  margin-bottom: 6px;
+}
+#tow-cue.warn { color: #8a6010; }
+#tow-cue.hidden { display: none; }
+
+/* Slip ball tube */
+#chip-slip {
+  min-width: 88px;
+  padding-bottom: 8px;
+}
+#slip-tube {
+  position: relative;
+  width: 72px;
+  height: 14px;
+  margin-top: 4px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(80, 200, 220, 0.75);
+  background: linear-gradient(
+    90deg,
+    rgba(200, 100, 90, 0.15),
+    rgba(255, 255, 255, 0.45) 40%,
+    rgba(255, 255, 255, 0.45) 60%,
+    rgba(200, 100, 90, 0.15)
+  );
+  overflow: hidden;
+}
+#slip-tube::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 1px;
+  bottom: 1px;
+  width: 1px;
+  background: rgba(40, 140, 160, 0.45);
+  transform: translateX(-50%);
+}
+#slip-ball {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: rgba(200, 90, 70, 0.92);
+  box-shadow: 0 0 4px rgba(180, 60, 40, 0.35);
+  transform: translateX(-50%);
+  transition: transform 0.06s linear;
+}
 
 /* Landing approach panel */
 #landing-panel {

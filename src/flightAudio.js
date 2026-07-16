@@ -69,6 +69,13 @@ export class FlightAudio {
     // Touchdown edge
     this._wasRolling = false;
     this._wasAlive = true;
+    // Tow rope creak
+    this._ropeGain = null;
+    this._ropeFilter = null;
+    this._ropeLfo = null;
+    this._ropeDepth = null;
+    this._ropeCreakTimer = 0;
+    this._ropePrevTen = 0;
   }
 
   async ensureStarted() {
@@ -193,6 +200,25 @@ export class FlightAudio {
     this._varioGain = ctx.createGain();
     this._varioGain.gain.value = 0.48;
     this._varioGain.connect(this._masterHP);
+
+    // Tow rope: filtered noise + slow LFO amplitude for tension creak
+    this._ropeGain = ctx.createGain();
+    this._ropeGain.gain.value = 0.0001;
+    this._ropeFilter = ctx.createBiquadFilter();
+    this._ropeFilter.type = 'bandpass';
+    this._ropeFilter.frequency.value = 280;
+    this._ropeFilter.Q.value = 2.2;
+    this._noiseSrc.connect(this._ropeFilter);
+    this._ropeFilter.connect(this._ropeGain);
+    this._ropeGain.connect(this._masterHP);
+    this._ropeLfo = ctx.createOscillator();
+    this._ropeLfo.type = 'sine';
+    this._ropeLfo.frequency.value = 6;
+    this._ropeDepth = ctx.createGain();
+    this._ropeDepth.gain.value = 0;
+    this._ropeLfo.connect(this._ropeDepth);
+    this._ropeDepth.connect(this._ropeGain.gain);
+    this._ropeLfo.start();
 
     // Continuous sink tone
     this._sinkGain = ctx.createGain();
@@ -333,6 +359,9 @@ export class FlightAudio {
       this._setGearMotor(0);
       this._setRollNoise(0);
       this._setAmb(0.012);
+      if (this._ropeGain && this.ctx) {
+        this._ropeGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.1);
+      }
       this._wasRolling = false;
       return;
     }
@@ -362,6 +391,7 @@ export class FlightAudio {
       this._setSinkTone(0, 300, this.ctx.currentTime);
       this._setBuffet(0, 8);
       this._setCanopy(0.0001, 800);
+      this._updateRope(dt, state); // ground-roll tow still creaks
       return;
     }
     this._setRollNoise(0);
@@ -415,6 +445,66 @@ export class FlightAudio {
 
     // —— Vario (king of the mix) ——
     this._updateVario(dt, state.vario || 0, upliftMode, lift);
+
+    // —— Tow rope tension creak ——
+    this._updateRope(dt, state);
+  }
+
+  _updateRope(dt, state) {
+    if (!this._ropeGain || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    const onTow = !!state.onTow;
+    const ten = Math.max(0, Math.min(1.4, state.ropeTension || 0));
+    const osc = Math.max(0, Math.min(1, state.ropeOsc || 0));
+    if (!onTow || ten < 0.04) {
+      this._ropeGain.gain.setTargetAtTime(0.0001, t, 0.12);
+      if (this._ropeDepth) this._ropeDepth.gain.setTargetAtTime(0, t, 0.1);
+      this._ropePrevTen = ten;
+      return;
+    }
+    // Steady creak under load; louder off-station / oscillating
+    const base = 0.012 + ten * 0.055 + osc * 0.04;
+    this._ropeGain.gain.setTargetAtTime(base, t, 0.08);
+    if (this._ropeFilter) {
+      this._ropeFilter.frequency.setTargetAtTime(180 + ten * 420 + osc * 180, t, 0.1);
+    }
+    if (this._ropeDepth) {
+      this._ropeDepth.gain.setTargetAtTime(base * (0.25 + osc * 0.55), t, 0.08);
+    }
+    if (this._ropeLfo) {
+      this._ropeLfo.frequency.setTargetAtTime(4 + osc * 10 + ten * 3, t, 0.1);
+    }
+    // Snatch ticks when tension rises sharply
+    const dTen = (ten - this._ropePrevTen) / Math.max(dt, 1e-3);
+    this._ropePrevTen = ten;
+    if (dTen > 1.8) {
+      this._ropeCreakTimer = 0;
+      this._playRopeSnatch(0.06 + Math.min(0.12, dTen * 0.03));
+    } else if (osc > 0.45 && ten > 0.35) {
+      this._ropeCreakTimer -= dt;
+      if (this._ropeCreakTimer <= 0) {
+        this._ropeCreakTimer = 0.18 + Math.random() * 0.22;
+        this._playRopeSnatch(0.025 + osc * 0.04);
+      }
+    }
+  }
+
+  _playRopeSnatch(peak) {
+    if (!this.ctx || this.ctx.state !== 'running' || !this._fxGain) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(140 + Math.random() * 80, t0);
+    o.frequency.exponentialRampToValueAtTime(55, t0 + 0.07);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(Math.max(0.001, peak), t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    o.connect(g);
+    g.connect(this._fxGain);
+    o.start(t0);
+    o.stop(t0 + 0.1);
   }
 
   _setAmb(level) {
@@ -573,7 +663,12 @@ export class FlightAudio {
     if (this.ctx && this._sinkGain) {
       this._setSinkTone(0, 300, this.ctx.currentTime);
     }
+    if (this.ctx && this._ropeGain) {
+      this._ropeGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.08);
+      if (this._ropeDepth) this._ropeDepth.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+    }
     this._wasRolling = false;
+    this._ropePrevTen = 0;
   }
 
   _updateRollNoise(dt, spd, brakes, onRunway) {
