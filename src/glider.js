@@ -814,6 +814,9 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
   // Three live gauges on the panel: ASI · VAR · ALT
   const instrumentNeedles = [];
   const gaugeXs = [-0.24, 0, 0.24];
+  const greenArc = fillMaterial({ color: 0x3a9a70 });
+  const yellowArc = fillMaterial({ color: 0xc9a040 });
+  const redArc = fillMaterial({ color: 0xc05048 });
   for (let gi = 0; gi < 3; gi++) {
     const gx = gaugeXs[gi];
     const face = new THREE.Mesh(
@@ -824,6 +827,29 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
     face.position.set(gx, 0.13, -0.64);
     cockpit.add(face);
     addEdges(face, 20);
+    // ASI colour arc (left gauge only): green cruise / yellow / red high
+    if (gi === 0) {
+      const arcGroup = new THREE.Group();
+      arcGroup.position.set(gx, 0.14, -0.62);
+      arcGroup.rotation.x = panelTilt;
+      // Approximate arcs as thin boxes around the dial
+      const mkArc = (mat, ang0, ang1, r = 0.048) => {
+        const mid = (ang0 + ang1) * 0.5;
+        const span = Math.abs(ang1 - ang0);
+        const seg = new THREE.Mesh(
+          new THREE.BoxGeometry(0.008, r * span * 0.9, 0.003),
+          mat
+        );
+        seg.position.set(Math.sin(mid) * r * 0.55, Math.cos(mid) * r * 0.55, 0.01);
+        seg.rotation.z = -mid;
+        arcGroup.add(seg);
+      };
+      // Angles match needle: −120°…+120° mapped to ASI
+      mkArc(greenArc, -1.6, 0.4);
+      mkArc(yellowArc, 0.4, 1.3);
+      mkArc(redArc, 1.3, 2.0);
+      cockpit.add(arcGroup);
+    }
     // Pivot at hub; needle points “up” in local +Y before rotation about Z
     const pivot = new THREE.Group();
     pivot.position.set(gx, 0.14, -0.625);
@@ -837,6 +863,32 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
     pivot.add(hub);
     instrumentNeedles.push(pivot);
   }
+  // Stall warning lamp (panel top center)
+  const stallLamp = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.022, 0.02),
+    fillMaterial({ color: 0x3a2020 })
+  );
+  stallLamp.position.set(0, 0.22, -0.62);
+  stallLamp.rotation.x = panelTilt;
+  cockpit.add(stallLamp);
+  const stallMatOn = fillMaterial({ color: 0xe05040 });
+  const stallMatOff = stallLamp.material;
+  // Mini compass strip under gauges
+  const compassStrip = new THREE.Mesh(
+    new THREE.BoxGeometry(0.42, 0.028, 0.02),
+    dk
+  );
+  compassStrip.position.set(0, -0.02, -0.58);
+  compassStrip.rotation.x = panelTilt;
+  cockpit.add(compassStrip);
+  addEdges(compassStrip, 12);
+  const compassMark = new THREE.Mesh(
+    new THREE.BoxGeometry(0.012, 0.022, 0.008),
+    acc
+  );
+  compassMark.position.set(0, -0.02, -0.568);
+  compassMark.rotation.x = panelTilt;
+  cockpit.add(compassMark);
   // Inclinometer / slip ball under the panel
   const slipTube = new THREE.Mesh(
     new THREE.BoxGeometry(0.22, 0.035, 0.03),
@@ -851,6 +903,10 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
   cockpit.add(slipBall);
   cockpit.userData.instrumentNeedles = instrumentNeedles; // [ASI, VAR, ALT]
   cockpit.userData.slipBall = slipBall;
+  cockpit.userData.stallLamp = stallLamp;
+  cockpit.userData.stallMatOn = stallMatOn;
+  cockpit.userData.stallMatOff = stallMatOff;
+  cockpit.userData.compassMark = compassMark;
 
   // —— Nose deck / glareshield (keeps horizon framed) ——
   addPart(new THREE.BoxGeometry(0.7, 0.04, 0.55), w, 0, 0.0, -0.95);
@@ -1050,6 +1106,21 @@ export function updateCockpitInstruments(glider, physics, dt = 0.016) {
     const xTarget = THREE.MathUtils.clamp(-beta * 0.55, -0.085, 0.085);
     const lag = 1 - Math.exp(-8 * Math.max(0.001, dt));
     ball.position.x += (xTarget - ball.position.x) * lag;
+  }
+  // Stall lamp
+  if (c.userData.stallLamp) {
+    const on = !!physics.stalled;
+    c.userData.stallLamp.material = on
+      ? c.userData.stallMatOn
+      : c.userData.stallMatOff;
+  }
+  // Compass mark slides with heading (−180…180 → ±0.18 m)
+  if (c.userData.compassMark && physics.heading) {
+    const hdg = physics.heading();
+    // 0 = north (−Z); map to strip: center = current heading mark fixed, tick moves opposite
+    const x = THREE.MathUtils.clamp(((hdg % 360) / 360 - 0.5) * 0.36, -0.18, 0.18);
+    const lag = 1 - Math.exp(-6 * Math.max(0.001, dt));
+    c.userData.compassMark.position.x += (x - c.userData.compassMark.position.x) * lag;
   }
 }
 

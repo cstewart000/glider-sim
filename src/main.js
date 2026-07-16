@@ -17,11 +17,14 @@ import { RidgeVaporSystem } from './ridgeVapor.js';
 import { createRunway, RUNWAY } from './runway.js';
 import { GliderPhysics } from './physics.js';
 import { sampleWind } from './atmosphere.js';
-import { initInput, updateInput, controls, resetLook } from './input.js';
+import {
+  initInput, updateInput, controls, resetLook, setInvertPitch,
+} from './input.js';
 import {
   showHUD, showTitle, showLanding, updateHUD, onStart, onRestart,
   setCockpitOverlayVisible, beginCrashSequence, beginLandingHold,
   updateCrashSequence, isResultHoldActive, hideCrashFx, setupScenarioMenu,
+  showCoachTip, coachForScenario,
 } from './hud.js';
 import { flightAudio } from './flightAudio.js';
 import {
@@ -34,7 +37,7 @@ import {
 } from './scenarioVisuals.js';
 import { initCockpitOverlay, updateCockpitOverlay } from './cockpitOverlay.js';
 import { initXR, updateXRRig, updateXRControls, isXRPresenting } from './xr.js';
-import { loadPrefs, savePrefs } from './prefs.js';
+import { loadPrefs, savePrefs, getVolume } from './prefs.js';
 
 // —— Renderer tuned for ~50fps on integrated GPUs ——
 const canvas = document.getElementById('c');
@@ -494,6 +497,7 @@ async function startFlight() {
   running = true;
   ended = false;
   showHUD();
+  showCoachTip(coachForScenario(sc.id), 12);
   savePrefs({ scenarioId: sc.id });
 }
 
@@ -542,10 +546,37 @@ initXR({
   camera,
   buttonHost: document.getElementById('vr-button-host') || document.body,
 });
-// Restore last scenario from prefs (falls back to ridge)
+// Restore prefs (scenario + options)
 {
   const prefs = loadPrefs();
   if (prefs.scenarioId) setActiveScenario(prefs.scenarioId);
+  flightAudio.setMasterVolume(getVolume());
+  setInvertPitch(!!prefs.invertPitch);
+  // Wire options UI
+  const volEl = document.getElementById('pref-volume');
+  const unitsEl = document.getElementById('pref-units');
+  const invEl = document.getElementById('pref-invert-pitch');
+  if (volEl) {
+    volEl.value = String(Math.round(getVolume() * 100));
+    volEl.addEventListener('input', () => {
+      const v = Number(volEl.value) / 100;
+      flightAudio.setMasterVolume(v);
+      savePrefs({ volume: v });
+    });
+  }
+  if (unitsEl) {
+    unitsEl.value = prefs.units === 'kt' ? 'kt' : 'kmh';
+    unitsEl.addEventListener('change', () => {
+      savePrefs({ units: unitsEl.value === 'kt' ? 'kt' : 'kmh' });
+    });
+  }
+  if (invEl) {
+    invEl.checked = !!prefs.invertPitch;
+    invEl.addEventListener('change', () => {
+      setInvertPitch(invEl.checked);
+      savePrefs({ invertPitch: invEl.checked });
+    });
+  }
 }
 setupScenarioMenu(SCENARIO_LIST, getActiveScenario().id, (id) => {
   setActiveScenario(id);

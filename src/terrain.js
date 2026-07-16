@@ -9,8 +9,8 @@ import * as THREE from 'three';
 import { fillMaterial } from './styleUtil.js';
 
 export const CHUNK_SIZE = 360;
-const SEG_NEAR = 24;
-const SEG_MID = 14;
+const SEG_NEAR = 32; // more ground mesh detail near the pilot
+const SEG_MID = 16;
 const SEG_FAR = 8;
 /** ~2.1 km radius */
 const VIEW_RADIUS = 6;
@@ -413,7 +413,7 @@ export function terrainHeight(x, z) {
 
 /**
  * Concept-art forest mass 0..1 — multi-scale density:
- * dense valley stands, medium scrub, open meadow gaps (like the drawing).
+ * solid valley stands, thick medium woodland, open meadow gaps.
  * Drives vertex greys + tree prop density.
  */
 export function forestMask(x, z, y = null) {
@@ -424,18 +424,23 @@ export function forestMask(x, z, y = null) {
     // Stay off open windward face, beach, high rock
     if (z > crest + 8) return 0;
     if (elev < SEA_LEVEL + 14 || elev > SEA_LEVEL + 100) return 0;
-    const n = fbm(x * 0.0075 + 2.4, z * 0.0075, 3);
-    const clump = fbm(x * 0.018 + 5, z * 0.018, 2);
-    const fine = fbm(x * 0.04 + 1, z * 0.04, 2);
-    const lee = smoothstep(crest + 6, crest - 100, z);
+    const n = fbm(x * 0.007 + 2.4, z * 0.007, 3);
+    const clump = fbm(x * 0.016 + 5, z * 0.016, 2);
+    const fine = fbm(x * 0.038 + 1, z * 0.038, 2);
+    const lee = smoothstep(crest + 6, crest - 120, z);
     const elevBand =
-      smoothstep(SEA_LEVEL + 14, SEA_LEVEL + 28, elev) *
-      (1 - smoothstep(SEA_LEVEL + 72, SEA_LEVEL + 100, elev));
+      smoothstep(SEA_LEVEL + 14, SEA_LEVEL + 26, elev) *
+      (1 - smoothstep(SEA_LEVEL + 78, SEA_LEVEL + 105, elev));
     const valley = valleyTerm(x, z);
-    // Dense core + scrubby edge
-    const core = smoothstep(0.42, 0.72, n + valley * 0.25) * (0.55 + clump * 0.55);
-    const scrub = smoothstep(0.28, 0.5, n) * 0.35 * (0.4 + fine * 0.6);
-    return clamp01(lee * elevBand * (core + scrub));
+    // Larger dense cores on lee slopes + valley pockets
+    const core =
+      smoothstep(0.34, 0.62, n + valley * 0.32) * (0.65 + clump * 0.55);
+    const medium =
+      smoothstep(0.26, 0.48, n + clump * 0.35) * 0.55 * (0.5 + fine * 0.5);
+    const scrub = smoothstep(0.2, 0.4, n) * 0.32 * (0.45 + fine * 0.55);
+    let m = Math.max(core, medium, scrub);
+    if (core > 0.45) m = Math.max(m, 0.78 + core * 0.22);
+    return clamp01(lee * elevBand * m);
   }
 
   // Airfield / XC: open strip + final corridor; forests on hills & valleys beyond
@@ -447,48 +452,49 @@ export function forestMask(x, z, y = null) {
   if (z > thrZ - 20 && z < thrZ + 480 && adx < 70) return 0;
 
   const r = Math.hypot(x - RW_X, z - RW_Z);
-  if (r < 180) return 0;
+  if (r < 160) return 0;
 
   // Multi-scale cover: large stands + medium clumps + fine stipple gaps
-  const large = fbm(x * 0.0038 + 1.7, z * 0.0038, 4); // big forest bodies
-  const clump = fbm(x * 0.012 + 4, z * 0.012, 3); // medium patches
-  const fine = fbm(x * 0.035 + 8, z * 0.035, 2); // edge freckle / openings
+  const large = fbm(x * 0.0034 + 1.7, z * 0.0034, 4); // bigger forest bodies
+  const clump = fbm(x * 0.011 + 4, z * 0.011, 3); // medium patches
+  const fine = fbm(x * 0.032 + 8, z * 0.032, 2); // edge freckle / openings
+  const pocket = fbm(x * 0.022 + 11, z * 0.022 + 3, 2); // dense pockets
   const valley = valleyTerm(x, z);
 
-  // Prefer valleys & mid slopes; allow some cover on gentle hills (concept)
+  // Prefer valleys & mid slopes; allow cover on gentle hills
   const elevBand =
-    smoothstep(55, 72, elev) * (1 - smoothstep(145, 195, elev));
-  // Fade in away from field; still present across XC triangle (~1 km)
+    smoothstep(52, 68, elev) * (1 - smoothstep(150, 205, elev));
+  // Fade in away from field; still present across XC triangle
   const ring =
-    smoothstep(180, 320, r) * (1 - smoothstep(1600, 2200, r) * 0.55);
+    smoothstep(160, 280, r) * (1 - smoothstep(1700, 2400, r) * 0.5);
 
-  // Dense stand cores — less frequent but very solid (concept ink blobs)
+  // Dense stand cores — more common + solid (concept ink blobs)
   const denseCore =
-    smoothstep(0.52, 0.72, large + valley * 0.22) *
-    smoothstep(0.4, 0.68, clump);
-  const dense = denseCore * (0.92 + fine * 0.08);
+    smoothstep(0.42, 0.64, large + valley * 0.28 + pocket * 0.18) *
+    smoothstep(0.32, 0.6, clump + pocket * 0.2);
+  const dense = denseCore * (0.94 + fine * 0.06);
 
-  // Medium woodland around cores
+  // Medium woodland around cores (fills more of the landscape)
   const medium =
-    smoothstep(0.36, 0.58, large * 0.7 + clump * 0.5 + valley * 0.18) *
-    (0.5 + fine * 0.4) *
-    0.78 *
-    (1 - denseCore * 0.35);
+    smoothstep(0.28, 0.52, large * 0.75 + clump * 0.55 + valley * 0.22) *
+    (0.55 + fine * 0.4) *
+    0.88 *
+    (1 - denseCore * 0.25);
 
   // Light scrub freckle on open slopes
   const scrub =
-    smoothstep(0.24, 0.45, large * 0.45 + clump * 0.4) *
-    (0.28 + fine * 0.5) *
-    0.42 *
+    smoothstep(0.18, 0.4, large * 0.5 + clump * 0.45) *
+    (0.32 + fine * 0.55) *
+    0.48 *
     (1 - denseCore);
 
-  // Small clearings only at edges of dense stands
-  const clearing = smoothstep(0.78, 0.92, fine) * 0.35 * (1 - denseCore * 0.7);
+  // Clearings only at edges of dense stands (meadow holes)
+  const clearing = smoothstep(0.82, 0.95, fine) * 0.28 * (1 - denseCore * 0.75);
 
   let m = Math.max(dense, medium, scrub);
-  // Boost density inside cores so they read as solid ink (not sparse freckle)
-  if (denseCore > 0.3) {
-    m = Math.max(m, 0.72 + denseCore * 0.28);
+  // Solid ink mass inside cores
+  if (denseCore > 0.25) {
+    m = Math.max(m, 0.78 + denseCore * 0.28);
   }
   m *= 1 - clearing;
   return clamp01(ring * elevBand * m);
@@ -600,10 +606,13 @@ function lodForRing(ring) {
 
 const LOD_RANK = { far: 0, mid: 1, near: 2 };
 
-// Low-poly canopy blobs — instanced; forest mass is mainly vertex colour
-const crownGeo = new THREE.ConeGeometry(1.05, 1.7, 5);
+// Low-poly canopy blobs — 3 silhouettes so stands don’t read as one stamp
+const crownGeoA = new THREE.ConeGeometry(1.05, 1.7, 5);
+const crownGeoB = new THREE.ConeGeometry(0.85, 2.1, 6); // taller spire
+const crownGeoC = new THREE.SphereGeometry(0.95, 5, 4); // rounder mass
 const crownMat = fillMaterial({ color: 0x4a4a50 });
 const crownMatLight = fillMaterial({ color: 0x6a6a70 }); // scrub / edge trees
+const crownGeos = [crownGeoA, crownGeoB, crownGeoC];
 // Concept-art water: cool pale blue-grey
 const waterMat = fillMaterial({
   color: 0xa8c0d4,
@@ -668,9 +677,30 @@ function vertexColor(x, z, y, lod) {
     }
   }
 
-  // —— Concept base: near-white fill; interest is lines + forest mass ——
+  // —— Concept base: near-white fill; ground texture + forest mass ——
   const n = lod === 'far' ? 0.45 : fbm(x * 0.018, z * 0.018, 2);
+  const n2 = lod === 'far' ? 0.5 : fbm(x * 0.055 + 2.1, z * 0.055, 2);
+  const n3 = lod === 'far' ? 0.5 : fbm(x * 0.12 + 5, z * 0.12, 1);
   let g = 0.94 - n * 0.035; // bright white-grey field
+
+  // Field / meadow grain near the strip (concept farm parcels)
+  if (activeProfile === 'airfield' && y < 110) {
+    const r = Math.hypot(x - RW_X, z - RW_Z);
+    if (r > 40 && r < 900) {
+      // Coarse field parcels
+      const parcel = fbm(x * 0.0045 + 0.8, z * 0.0045, 2);
+      const furrow = Math.abs(Math.sin(x * 0.045 + z * 0.012 + parcel * 4));
+      const field =
+        smoothstep(50, 140, r) *
+        (1 - smoothstep(700, 950, r)) *
+        (1 - forestMask(x, z, y) * 0.9);
+      g -= field * (0.018 + parcel * 0.028 + furrow * 0.02);
+      // Soft hedge lines between parcels
+      const hedge =
+        Math.pow(1 - Math.min(1, Math.abs(parcel - 0.5) * 8), 2) * field;
+      g -= hedge * 0.06 * (0.5 + n2);
+    }
+  }
 
   // High rock / snowcap slightly brighter
   if (y > 160) g = 0.97 - n * 0.02;
@@ -678,25 +708,33 @@ function vertexColor(x, z, y, lod) {
   // Rock face band: tiny cool shift so slopes read under lines
   if (y > 90 && y < 200) {
     const rock = smoothstep(90, 130, y) * (1 - smoothstep(170, 210, y));
-    g -= rock * 0.03 * (0.4 + n);
+    g -= rock * 0.035 * (0.4 + n + n3 * 0.3);
+  }
+  // Slope freckle / scree on mid hills
+  if (lod !== 'far' && y > 75 && y < 160) {
+    const scree = smoothstep(0.55, 0.85, n2) * 0.025;
+    g -= scree;
   }
 
   // Forest / ground cover mass (concept: solid dark stands + lighter scrub)
+  // Far LOD: darker mass only (no tree instances) so horizons still read wooded
   const forest =
     lod === 'far'
-      ? forestMask(x, z, y) * 0.82
+      ? forestMask(x, z, y) * 0.95
       : forestMask(x, z, y);
-  if (forest > 0.04) {
+  if (forest > 0.03) {
     // Multi-scale stipple — dense cores near-charcoal, edges freckled
     const stipple =
       lod === 'far'
-        ? 0.5
-        : fbm(x * 0.08 + 3, z * 0.08, 2) * 0.6 + fbm(x * 0.24, z * 0.24, 1) * 0.4;
+        ? 0.55
+        : fbm(x * 0.08 + 3, z * 0.08, 2) * 0.55 +
+          fbm(x * 0.22, z * 0.22, 1) * 0.45;
     // Heavier darkening so dense places match concept ink masses
     const dark =
-      forest * (0.22 + forest * 0.38) + // base mass (stronger in dense)
-      forest * stipple * 0.14;
-    g = Math.max(0.26, g - dark);
+      forest * (0.26 + forest * 0.42) + // stronger base mass
+      forest * stipple * 0.16 +
+      (lod === 'far' ? forest * 0.08 : 0);
+    g = Math.max(0.2, g - dark);
   }
 
   // Coastal high ridge: slightly cooler pale rock
@@ -705,7 +743,7 @@ function vertexColor(x, z, y, lod) {
     g = g * (1 - high * 0.08) + 0.96 * high;
   }
 
-  return { r: g, g: g, b: g * 0.995 };
+  return { r: g, g: g * 0.998, b: g * 0.992 };
 }
 
 /**
@@ -716,7 +754,7 @@ function addIsolines(group, geo, segs, ox, oz, lod, lineMat) {
   const pos = geo.attributes.position;
   const cols = segs + 1;
   const rows = segs + 1;
-  const interval = lod === 'near' ? 26 : 40;
+  const interval = lod === 'near' ? 18 : 34;
   const positions = [];
 
   function crossPoint(iA, iB, level) {
@@ -904,11 +942,13 @@ function buildChunkMesh(cx, cz, mat, edgeMatNear, edgeMatMid, isoMat, ring) {
     maybeAddSandStrip(group, originX, originZ, lod);
   }
 
-  // Tree props: denser near, lighter mid (concept stipple from air)
+  // Tree props: full clusters near; sparse mid; far = vertex forest mass only
   if (lod === 'near') {
     addChunkTrees(group, originX, originZ, 1);
+    addChunkGroundProps(group, originX, originZ, 1);
   } else if (lod === 'mid') {
-    addChunkTrees(group, originX, originZ, 0.45);
+    addChunkTrees(group, originX, originZ, 0.38);
+    addChunkGroundProps(group, originX, originZ, 0.3);
   }
 
   return group;
@@ -972,76 +1012,270 @@ function maybeAddSandStrip(group, originX, originZ, lod) {
 }
 
 /**
- * Place tree canopy instances by forest density.
- * Dense stands pack tighter; scrub edges are fewer/taller mix.
- * Uses InstancedMesh for performance at XC-scale cover.
+ * Place trees as organic clusters (not grid rows).
+ * Dense seeds grow packed stands; medium mask gets sparse freckles; open stays empty.
+ * Performance: densityScale thins mid/far; max instances capped hard.
  */
 function addChunkTrees(group, originX, originZ, densityScale) {
   const rng = mulberry32(((originX * 73856093) ^ (originZ * 19349663)) >>> 0);
-  // Tighter grid in dense near LOD — concept packed stands
-  const cell = densityScale > 0.7 ? 18 : 36;
-  const maxN = densityScale > 0.7 ? 160 : 55;
-  const matrices = [];
-  const matricesLight = [];
+  const denseNear = densityScale > 0.7;
+  // Hard caps — dense near looks full; mid is mass + sparse props only
+  const maxN = denseNear ? 220 : densityScale > 0.4 ? 55 : 0;
+  if (maxN <= 0) return; // far: forest is vertex colour mass only
+  // Buckets by silhouette + dark/light material
+  const buckets = [
+    [[], []], // geoA dark, light
+    [[], []],
+    [[], []],
+  ];
   const dummy = new THREE.Object3D();
 
-  for (let gx = 0; gx < CHUNK_SIZE; gx += cell) {
-    for (let gz = 0; gz < CHUNK_SIZE; gz += cell) {
-      if (matrices.length + matricesLight.length >= maxN) break;
-      const x = originX + gx + (rng() - 0.5) * cell * 0.85;
-      const z = originZ + gz + (rng() - 0.5) * cell * 0.85;
-      const y = terrainHeight(x, z);
-      const fm = forestMask(x, z, y);
-      if (fm < 0.14) continue;
-      // High keep-rate in dense cores
-      if (rng() > 0.08 + fm * 0.95) continue;
+  const placeTree = (jx, jz, fm2) => {
+    let total = 0;
+    for (const b of buckets) total += b[0].length + b[1].length;
+    if (total >= maxN) return false;
+    if (
+      jx < originX - 4 ||
+      jx > originX + CHUNK_SIZE + 4 ||
+      jz < originZ - 4 ||
+      jz > originZ + CHUNK_SIZE + 4
+    ) {
+      return false;
+    }
+    const jy = terrainHeight(jx, jz);
+    const fm = fm2 != null ? fm2 : forestMask(jx, jz, jy);
+    if (fm < 0.1) return false;
 
-      // Pack tight clusters where mask is high
-      const cluster =
-        fm > 0.5
-          ? 2 + Math.floor(rng() * 4 * densityScale)
-          : fm > 0.32
-            ? 1 + Math.floor(rng() * 2)
-            : 1;
-      for (let c = 0; c < cluster; c++) {
-        if (matrices.length + matricesLight.length >= maxN) break;
-        const spread = fm > 0.5 ? 9 : 14;
-        const jx = x + (rng() - 0.5) * spread * (c > 0 ? 1 : 0.35);
-        const jz = z + (rng() - 0.5) * spread * (c > 0 ? 1 : 0.35);
+    const s =
+      fm > 0.55
+        ? 1.5 + rng() * 2.5
+        : fm > 0.35
+          ? 0.95 + rng() * 1.55
+          : 0.5 + rng() * 1.0;
+    // Sphere crown sits lower; cone tip offset
+    const shape = Math.floor(rng() * 3);
+    const yOff = shape === 2 ? 0.55 * s : 0.72 * s;
+    dummy.position.set(jx, jy + yOff, jz);
+    const sx = s * (0.9 + rng() * 0.55);
+    const sy = s * (0.65 + rng() * 0.5);
+    const sz = s * (0.9 + rng() * 0.55);
+    dummy.scale.set(sx, sy, sz);
+    dummy.rotation.set((rng() - 0.5) * 0.12, rng() * Math.PI * 2, (rng() - 0.5) * 0.12);
+    dummy.updateMatrix();
+    const matIdx = fm > 0.32 ? 0 : 1;
+    buckets[shape][matIdx].push(dummy.matrix.clone());
+    return true;
+  };
+
+  // —— 1) Cluster seeds (random samples, spaced, prefer dense mask) ——
+  const seeds = [];
+  const seedAttempts = denseNear ? 90 : densityScale > 0.4 ? 36 : 0;
+  for (let i = 0; i < seedAttempts; i++) {
+    const x = originX + rng() * CHUNK_SIZE;
+    const z = originZ + rng() * CHUNK_SIZE;
+    const y = terrainHeight(x, z);
+    const fm = forestMask(x, z, y);
+    // Seeds only in solid / medium woodland
+    if (fm < 0.3) continue;
+    // Bias toward dense cores (quadratic)
+    if (rng() > fm * fm * 1.15) continue;
+    // Keep seeds apart so stands form blobs, not a lattice
+    const minSep = 22 + (1 - fm) * 48 + rng() * 12;
+    let ok = true;
+    for (let s = 0; s < seeds.length; s++) {
+      const dx = x - seeds[s].x;
+      const dz = z - seeds[s].z;
+      if (dx * dx + dz * dz < minSep * minSep) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    seeds.push({ x, z, fm });
+  }
+
+  const treeCount = () => {
+    let n = 0;
+    for (const b of buckets) n += b[0].length + b[1].length;
+    return n;
+  };
+
+  // —— 2) Grow each seed into an irregular clump (polar + ellipse + lobes) ——
+  for (let si = 0; si < seeds.length; si++) {
+    if (treeCount() >= maxN) break;
+    const seed = seeds[si];
+    const baseR = 10 + seed.fm * 26 + rng() * 8;
+    const count = Math.floor((5 + seed.fm * 26 + rng() * 6) * densityScale);
+    // Random ellipse axes so stands aren't circular
+    const ax = 0.55 + rng() * 0.7;
+    const az = 0.55 + rng() * 0.7;
+    const rot = rng() * Math.PI * 2;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+
+    for (let t = 0; t < count; t++) {
+      if (treeCount() >= maxN) break;
+      const ang = rng() * Math.PI * 2;
+      // Power < 1 packs center; higher fm → denser core, soft edge
+      const fall = 0.28 + (1 - seed.fm) * 0.45;
+      const rr = baseR * Math.pow(rng(), fall);
+      // Occasional gap ray (sparse sector) for natural openings
+      const gap = Math.sin(ang * 2.3 + seed.x * 0.01) * 0.5 + 0.5;
+      if (gap < 0.18 && seed.fm < 0.7 && rng() > 0.35) continue;
+
+      const lx = Math.cos(ang) * rr * ax;
+      const lz = Math.sin(ang) * rr * az;
+      // Rotate ellipse
+      const jx = seed.x + lx * cosR - lz * sinR + (rng() - 0.5) * 2.2;
+      const jz = seed.z + lx * sinR + lz * cosR + (rng() - 0.5) * 2.2;
+      const jy = terrainHeight(jx, jz);
+      const fm2 = forestMask(jx, jz, jy);
+      // Edge of clump can be thinner
+      if (fm2 < 0.1) continue;
+      if (rr > baseR * 0.65 && fm2 < 0.22 && rng() > 0.45) continue;
+      placeTree(jx, jz, fm2);
+    }
+
+    // Satellite lobe (common on large stands)
+    if (seed.fm > 0.48 && rng() > 0.35 && treeCount() < maxN) {
+      const lobeAng = rng() * Math.PI * 2;
+      const lobeDist = baseR * (0.45 + rng() * 0.55);
+      const lx = seed.x + Math.cos(lobeAng) * lobeDist;
+      const lz = seed.z + Math.sin(lobeAng) * lobeDist;
+      const lobeN = Math.floor((4 + seed.fm * 12) * densityScale);
+      const lobeR = baseR * (0.35 + rng() * 0.35);
+      for (let t = 0; t < lobeN; t++) {
+        if (treeCount() >= maxN) break;
+        const ang = rng() * Math.PI * 2;
+        const rr = lobeR * Math.pow(rng(), 0.4);
+        const jx = lx + Math.cos(ang) * rr * (0.7 + rng() * 0.5);
+        const jz = lz + Math.sin(ang) * rr * (0.7 + rng() * 0.5);
         const jy = terrainHeight(jx, jz);
         const fm2 = forestMask(jx, jz, jy);
         if (fm2 < 0.12) continue;
-
-        // Size mix: tall packed canopy in dense, small freckles on edges
-        const s =
-          fm2 > 0.5
-            ? 1.4 + rng() * 2.4
-            : 0.65 + rng() * 1.15;
-        dummy.position.set(jx, jy + 0.72 * s, jz);
-        dummy.scale.set(
-          s * (0.95 + rng() * 0.45),
-          s * (0.7 + rng() * 0.4),
-          s * (0.95 + rng() * 0.45)
-        );
-        dummy.rotation.set(0, rng() * Math.PI * 2, (rng() - 0.5) * 0.1);
-        dummy.updateMatrix();
-        if (fm2 > 0.36) matrices.push(dummy.matrix.clone());
-        else matricesLight.push(dummy.matrix.clone());
+        placeTree(jx, jz, fm2);
       }
     }
   }
 
-  if (matrices.length > 0) {
-    const inst = new THREE.InstancedMesh(crownGeo, crownMat, matrices.length);
-    for (let i = 0; i < matrices.length; i++) inst.setMatrixAt(i, matrices[i]);
+  // —— 3) Sparse freckles in medium forest (not cluster cores) ——
+  const freckleAttempts = denseNear ? 90 : densityScale > 0.4 ? 28 : 0;
+  for (let i = 0; i < freckleAttempts; i++) {
+    let total = 0;
+    for (const b of buckets) total += b[0].length + b[1].length;
+    if (total >= maxN) break;
+    const x = originX + rng() * CHUNK_SIZE;
+    const z = originZ + rng() * CHUNK_SIZE;
+    const y = terrainHeight(x, z);
+    const fm = forestMask(x, z, y);
+    // Only medium/light cover — leave open meadows empty, avoid filling dense cores
+    if (fm < 0.12 || fm > 0.48) continue;
+    // Sparse: low keep rate
+    if (rng() > 0.12 + fm * 0.35) continue;
+    // Single tree or tiny pair
+    placeTree(x, z, fm);
+    if (fm > 0.3 && rng() > 0.55) {
+      placeTree(x + (rng() - 0.5) * 8, z + (rng() - 0.5) * 8, null);
+    }
+  }
+
+  for (let gi = 0; gi < 3; gi++) {
+    for (let mi = 0; mi < 2; mi++) {
+      const list = buckets[gi][mi];
+      if (!list.length) continue;
+      const mat = mi === 0 ? crownMat : crownMatLight;
+      const inst = new THREE.InstancedMesh(crownGeos[gi], mat, list.length);
+      for (let i = 0; i < list.length; i++) inst.setMatrixAt(i, list[i]);
+      inst.instanceMatrix.needsUpdate = true;
+      inst.frustumCulled = true;
+      inst.castShadow = false;
+      group.add(inst);
+    }
+  }
+}
+
+// Shared ground prop geometries (rocks + hedge blobs)
+const rockGeo = new THREE.BoxGeometry(1, 0.55, 0.85);
+const rockMat = fillMaterial({ color: 0x5a5a62 });
+const hedgeGeo = new THREE.BoxGeometry(1.4, 0.7, 0.55);
+const hedgeMat = fillMaterial({ color: 0x4e4e54 });
+
+/**
+ * Sparse ground props: rocks on hills, hedge freckles on open farmland.
+ * Keeps runway / finals clear via forestMask + distance checks.
+ */
+function addChunkGroundProps(group, originX, originZ, densityScale) {
+  const rng = mulberry32(((originX * 19349663) ^ (originZ * 83492791)) >>> 0);
+  const cell = densityScale > 0.7 ? 28 : 48;
+  const maxRocks = densityScale > 0.7 ? 28 : 10;
+  const maxHedges = densityScale > 0.7 ? 36 : 12;
+  const rocks = [];
+  const hedges = [];
+  const dummy = new THREE.Object3D();
+
+  for (let gx = 0; gx < CHUNK_SIZE; gx += cell) {
+    for (let gz = 0; gz < CHUNK_SIZE; gz += cell) {
+      const x = originX + gx + (rng() - 0.5) * cell * 0.7;
+      const z = originZ + gz + (rng() - 0.5) * cell * 0.7;
+      const y = terrainHeight(x, z);
+      const adx = Math.abs(x - RW_X);
+      const adz = Math.abs(z - RW_Z);
+      if (adx < RW_HW + 50 && adz < RW_HL + 60) continue;
+      const thrZ = RW_Z + RW_HL;
+      if (z > thrZ - 20 && z < thrZ + 480 && adx < 80) continue;
+
+      const fm = forestMask(x, z, y);
+      const r = Math.hypot(x - RW_X, z - RW_Z);
+
+      // Rocks on mid slopes / hills (open or light scrub)
+      if (
+        rocks.length < maxRocks &&
+        y > 78 &&
+        y < 170 &&
+        fm < 0.4 &&
+        rng() < 0.22 * densityScale
+      ) {
+        const s = 0.7 + rng() * 1.8;
+        dummy.position.set(x, y + 0.15 * s, z);
+        dummy.scale.set(s * (0.8 + rng() * 0.5), s * (0.5 + rng() * 0.6), s * (0.8 + rng() * 0.5));
+        dummy.rotation.set(rng() * 0.3, rng() * Math.PI, rng() * 0.25);
+        dummy.updateMatrix();
+        rocks.push(dummy.matrix.clone());
+      }
+
+      // Hedge freckles: open farmland ring around airfield
+      if (
+        activeProfile === 'airfield' &&
+        hedges.length < maxHedges &&
+        r > 200 &&
+        r < 900 &&
+        y < 115 &&
+        fm < 0.22 &&
+        rng() < 0.28 * densityScale
+      ) {
+        const parcel = fbm(x * 0.0045 + 0.8, z * 0.0045, 2);
+        // Prefer parcel edges
+        if (Math.abs(parcel - 0.5) > 0.12 && rng() > 0.55) continue;
+        const s = 1.1 + rng() * 1.6;
+        dummy.position.set(x, y + 0.25 * s, z);
+        dummy.scale.set(s * (1.2 + rng()), s * (0.7 + rng() * 0.5), s * (0.5 + rng() * 0.4));
+        dummy.rotation.set(0, rng() * Math.PI * 2, 0);
+        dummy.updateMatrix();
+        hedges.push(dummy.matrix.clone());
+      }
+    }
+  }
+
+  if (rocks.length > 0) {
+    const inst = new THREE.InstancedMesh(rockGeo, rockMat, rocks.length);
+    for (let i = 0; i < rocks.length; i++) inst.setMatrixAt(i, rocks[i]);
     inst.instanceMatrix.needsUpdate = true;
     inst.frustumCulled = true;
-    inst.castShadow = false;
     group.add(inst);
   }
-  if (matricesLight.length > 0) {
-    const inst = new THREE.InstancedMesh(crownGeo, crownMatLight, matricesLight.length);
-    for (let i = 0; i < matricesLight.length; i++) inst.setMatrixAt(i, matricesLight[i]);
+  if (hedges.length > 0) {
+    const inst = new THREE.InstancedMesh(hedgeGeo, hedgeMat, hedges.length);
+    for (let i = 0; i < hedges.length; i++) inst.setMatrixAt(i, hedges[i]);
     inst.instanceMatrix.needsUpdate = true;
     inst.frustumCulled = true;
     group.add(inst);

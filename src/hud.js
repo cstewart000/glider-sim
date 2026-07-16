@@ -3,14 +3,50 @@
 import { controls } from './input.js';
 import { getTerrainProfile } from './terrain.js';
 import { scenarioRuntime, isLaunchAttached } from './scenarios.js';
+import { getUnits } from './prefs.js';
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/** @type {null | { text: string, t: number, dur: number }} */
+let coach = null;
+
+/**
+ * Show a short onboarding tip at flight start.
+ * @param {string} text
+ * @param {number} [durSec]
+ */
+export function showCoachTip(text, durSec = 11) {
+  coach = { text, t: 0, dur: durSec };
+  if (el.coach) {
+    el.coach.textContent = text;
+    el.coach.classList.remove('hidden');
+  }
+}
+
+export function clearCoachTip() {
+  coach = null;
+  if (el.coach) el.coach.classList.add('hidden');
+}
+
+const COACH_BY_SCENARIO = {
+  sandbox: 'Circle yellow thermals for lift · gear down to land · M for menu',
+  cable: 'Hold wings level · stick slightly back as you kite · R releases near the top',
+  tow: 'Stay low and centered behind the tug · R releases · off-station yanks hard',
+  ridge: 'Fly into the mist / vapour on the windward face for lift',
+  landing: 'Turn final · capture path · gear down · flare and roll out',
+  crosscountry: 'Thermals are yellow columns · claim TP1 → TP2 → HOME',
+};
+
+export function coachForScenario(id) {
+  return COACH_BY_SCENARIO[id] || 'Fly · M menu · C camera';
+}
+
 const el = {
   alt: document.getElementById('alt'),
   spd: document.getElementById('spd'),
+  spdUnit: document.getElementById('spd-unit'),
   vario: document.getElementById('var'),
   hdg: document.getElementById('hdg'),
   gear: document.getElementById('gear'),
@@ -20,6 +56,7 @@ const el = {
   varioNeedle: document.getElementById('vario-needle'),
   altNeedle: document.getElementById('alt-needle'),
   thermalHint: document.getElementById('thermal-hint'),
+  coach: document.getElementById('coach-tip'),
   towPanel: document.getElementById('tow-panel'),
   towStation: document.getElementById('tow-station'),
   towFill: document.getElementById('tow-tension-fill'),
@@ -81,6 +118,10 @@ export function showHUD() {
   crashSeq = null;
 }
 
+export function hideCoachOnTitle() {
+  clearCoachTip();
+}
+
 export function showTitle() {
   el.hud.classList.remove('visible');
   el.title.classList.remove('hidden');
@@ -88,6 +129,7 @@ export function showTitle() {
   if (el.landPanel) el.landPanel.classList.add('hidden');
   if (el.towPanel) el.towPanel.classList.add('hidden');
   if (el.sandboxPanel) el.sandboxPanel.classList.add('hidden');
+  clearCoachTip();
   hideCrashFx();
   crashSeq = null;
 }
@@ -275,8 +317,16 @@ export function updateHUD(physics, dt) {
   const doDom = _hudSkip >= 0.05;
   if (doDom) _hudSkip = 0;
 
+  // Coach tip timer
+  if (coach) {
+    coach.t += dt;
+    if (coach.t >= coach.dur) clearCoachTip();
+  }
+
   const alt = physics.position.y;
-  const spd = physics.airspeed * 3.6;
+  const units = getUnits();
+  const spd =
+    units === 'kt' ? physics.airspeed * 1.94384 : physics.airspeed * 3.6;
   const v = physics.vario;
   const hdg = physics.heading();
 
@@ -285,6 +335,7 @@ export function updateHUD(physics, dt) {
   } else {
   el.alt.textContent = alt.toFixed(0);
   el.spd.textContent = spd.toFixed(0);
+  if (el.spdUnit) el.spdUnit.textContent = units === 'kt' ? 'kt' : 'km/h';
   el.hdg.textContent = hdg.toFixed(0);
   if (el.gear) {
     el.gear.textContent = controls.gear > 0.5 ? 'DN' : 'UP';

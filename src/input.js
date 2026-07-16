@@ -1,6 +1,15 @@
 /** Keyboard / control state — natural arcade mapping */
 
+import { getInvertPitch } from './prefs.js';
+
 const keys = Object.create(null);
+
+/** Runtime override (prefs UI); null = read from storage each frame */
+let invertPitchOverride = null;
+
+export function setInvertPitch(on) {
+  invertPitchOverride = !!on;
+}
 
 export const controls = {
   // pitch: +1 = nose UP, -1 = nose DOWN
@@ -80,8 +89,12 @@ let menuLatched = false;
 let gearLatched = false;
 
 export function updateInput() {
-  // W/↑ = nose down, S/↓ = nose up (reversed pitch)
-  controls.pitch = (keys.pitchUp ? 1 : 0) - (keys.pitchDown ? 1 : 0);
+  // Default: W/↑ = nose down, S/↓ = nose up (aircraft-style push stick)
+  let pitch = (keys.pitchUp ? 1 : 0) - (keys.pitchDown ? 1 : 0);
+  const invert =
+    invertPitchOverride != null ? invertPitchOverride : getInvertPitch();
+  if (invert) pitch = -pitch;
+  controls.pitch = pitch;
   // A = bank left (-), D = bank right (+)
   controls.roll = (keys.rollRight ? 1 : 0) - (keys.rollLeft ? 1 : 0);
   // Q = yaw left (-), E = yaw right (+)

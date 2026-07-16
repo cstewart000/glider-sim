@@ -152,6 +152,7 @@
           </svg>
         </div>
         <div id="stall-banner" class="hidden">STALL</div>
+        <div id="coach-tip" class="hidden" aria-live="polite"></div>
 
         <!-- Instruments: needles rotate in a group centered on the gauge hub -->
         <div id="holo-stack">
@@ -187,7 +188,7 @@
           <div class="holo-chip" id="chip-ias">
             <span class="chip-label">IAS</span>
             <span id="spd" class="chip-value">—</span>
-            <span class="chip-unit">km/h</span>
+            <span class="chip-unit" id="spd-unit">km/h</span>
           </div>
 
           <div class="holo-gauge small" id="gauge-alt">
@@ -353,6 +354,27 @@
               </div>
             </div>
             <p class="vr-tip"><strong>VR</strong> Right stick pitch/roll · Left rudder · Trigger brakes · A gear · B release</p>
+          </section>
+
+          <section class="menu-section prefs-section" aria-labelledby="prefs-heading">
+            <h2 id="prefs-heading" class="menu-heading">Options</h2>
+            <div class="prefs-grid">
+              <label class="pref-row">
+                <span>Volume</span>
+                <input type="range" id="pref-volume" min="0" max="100" value="70" />
+              </label>
+              <label class="pref-row">
+                <span>Speed</span>
+                <select id="pref-units">
+                  <option value="kmh">km/h</option>
+                  <option value="kt">knots</option>
+                </select>
+              </label>
+              <label class="pref-row pref-check">
+                <input type="checkbox" id="pref-invert-pitch" />
+                <span>Invert pitch (W = nose up)</span>
+              </label>
+            </div>
           </section>
 
           <div class="title-actions">

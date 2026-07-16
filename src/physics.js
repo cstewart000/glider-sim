@@ -274,14 +274,22 @@ export class GliderPhysics {
       cl *= 0.4;
     }
 
-    // Ground effect: reduce induced drag + slight Cl near runway
+    // Ground effect: stronger float in the last wingspan (flare cushion)
     const terrainY0 = getTerrainY(this.position.x, this.position.z);
     const agl = this.position.y - terrainY0;
     let kInd = K_IND;
-    if (agl > 0 && agl < SPAN * 0.85) {
-      const ge = 1 - Math.exp((-2.8 * agl) / SPAN); // 0 near ground → 1 high
-      kInd = K_IND * (0.32 + 0.68 * ge);
-      cl *= 1 + 0.1 * (1 - ge);
+    if (agl > 0 && agl < SPAN * 1.1) {
+      // ge: 0 on deck → 1 above ~1 wingspan
+      const ge = 1 - Math.exp((-2.2 * agl) / SPAN);
+      kInd = K_IND * (0.22 + 0.78 * ge);
+      cl *= 1 + 0.18 * (1 - ge);
+      // Extra lift cushion in the last 8 m when pitching up (flare)
+      if (agl < 8 && (ctrl.pitch || 0) > 0.15) {
+        const flare = Math.min(1, (ctrl.pitch || 0)) * (1 - agl / 8);
+        cl *= 1 + 0.12 * flare;
+        // Soft upward force so roundout isn’t a brick
+        this.velocity.y += flare * 2.8 * dt;
+      }
     }
 
     let cd =
@@ -694,9 +702,10 @@ export class GliderPhysics {
       spd = velH.length();
     }
 
-    const mu = this.onRunway ? 0.22 : 0.55;
-    const brakeExtra = brake * 3.8;
-    const decel = mu * G * 0.65 + brakeExtra + spd * 0.12 + spd * spd * 0.008;
+    // Runway rolls out longer; grass grabs harder (and more with brakes)
+    const mu = this.onRunway ? 0.16 : 0.72;
+    const brakeExtra = brake * (this.onRunway ? 4.2 : 5.5);
+    const decel = mu * G * 0.7 + brakeExtra + spd * 0.1 + spd * spd * (this.onRunway ? 0.006 : 0.014);
     spd = Math.max(0, spd - decel * dt);
     this.velocity.set(_fwd.x * spd, 0, _fwd.z * spd);
 

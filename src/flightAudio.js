@@ -18,6 +18,7 @@ export class FlightAudio {
     this.ctx = null;
     this.ready = false;
     this.enabled = true;
+    this._userVolume = 0.7;
     this._beepTimer = 0;
     this._sinkPulseTimer = 0;
     this._buffetPhase = 0;
@@ -116,7 +117,7 @@ export class FlightAudio {
     this._masterComp.release.value = 0.22;
 
     this._master = ctx.createGain();
-    this._master.gain.value = 0.62;
+    this._master.gain.value = 0.62 * (this._userVolume ?? 0.7);
     this._masterHP.connect(this._masterComp);
     this._masterComp.connect(this._master);
     this._master.connect(ctx.destination);
@@ -441,6 +442,9 @@ export class FlightAudio {
     if (lift > 1.2) {
       const airMass = Math.min(0.06, (lift - 1.2) * 0.012);
       this._setAmb(0.028 + airMass + Math.min(0.04, spd / 800));
+      this._updateThermalHum(lift);
+    } else {
+      this._updateThermalHum(0);
     }
 
     // —— Vario (king of the mix) ——
@@ -448,6 +452,46 @@ export class FlightAudio {
 
     // —— Tow rope tension creak ——
     this._updateRope(dt, state);
+  }
+
+  /**
+   * User master volume 0..1 (multiplies default bus gain).
+   * @param {number} v
+   */
+  setMasterVolume(v) {
+    this._userVolume = Math.max(0, Math.min(1, v));
+    if (this._master && this.ctx) {
+      const target = 0.62 * this._userVolume;
+      this._master.gain.setTargetAtTime(target, this.ctx.currentTime, 0.05);
+    }
+  }
+
+  _updateThermalHum(lift) {
+    if (!this.ctx) return;
+    if (!this._thermOsc) {
+      // Lazy-build quiet rising air hum
+      const ctx = this.ctx;
+      this._thermOsc = ctx.createOscillator();
+      this._thermOsc.type = 'sine';
+      this._thermOsc.frequency.value = 85;
+      this._thermGain = ctx.createGain();
+      this._thermGain.gain.value = 0.0001;
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.value = 220;
+      this._thermOsc.connect(filt);
+      filt.connect(this._thermGain);
+      this._thermGain.connect(this._masterHP);
+      this._thermOsc.start();
+    }
+    const t = this.ctx.currentTime;
+    if (lift > 1.4) {
+      const amt = Math.min(1, (lift - 1.4) / 5);
+      this._thermGain.gain.setTargetAtTime(0.012 + amt * 0.04, t, 0.15);
+      this._thermOsc.frequency.setTargetAtTime(70 + amt * 50, t, 0.2);
+    } else {
+      this._thermGain.gain.setTargetAtTime(0.0001, t, 0.2);
+    }
   }
 
   _updateRope(dt, state) {
@@ -810,6 +854,20 @@ export class FlightAudio {
     g.connect(this._fxGain);
     o.start(t0);
     o.stop(t0 + 0.25);
+
+    // Short wheel chirp / squeal (stronger on runway)
+    const chirp = ctx.createOscillator();
+    chirp.type = 'triangle';
+    chirp.frequency.setValueAtTime(onRunway ? 780 : 420, t0);
+    chirp.frequency.exponentialRampToValueAtTime(onRunway ? 220 : 140, t0 + 0.09);
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(0.0001, t0);
+    cg.gain.linearRampToValueAtTime((onRunway ? 0.14 : 0.07) * r01, t0 + 0.008);
+    cg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
+    chirp.connect(cg);
+    cg.connect(this._fxGain);
+    chirp.start(t0);
+    chirp.stop(t0 + 0.12);
 
     // Short noise slap
     const n = Math.floor(ctx.sampleRate * 0.08);

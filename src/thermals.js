@@ -41,7 +41,23 @@ export class ThermalSystem {
     const edgeMat = new THREE.LineBasicMaterial({
       color: 0xe8d48a,
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.28,
+    });
+    // Soft haze shell (readable from distance without solid walls)
+    const hazeMat = new THREE.MeshBasicMaterial({
+      color: 0xf2e6b0,
+      transparent: true,
+      opacity: 0.07,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    // Ground “dust ring” — thermal base cue when looking down
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xe8d070,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+      side: THREE.DoubleSide,
     });
 
     for (const s of spots) {
@@ -70,29 +86,51 @@ export class ThermalSystem {
       mesh.rotation.x = t.lean * 0.25;
       this.group.add(mesh);
       t.mesh = mesh;
+
+      // Soft haze cylinder (more visible mid-column)
+      const haze = new THREE.Mesh(
+        new THREE.CylinderGeometry(s.r * 0.28, s.r * 0.75, h * 0.85, 10, 1, true),
+        hazeMat
+      );
+      haze.position.set(s.x, groundY + h * 0.42, s.z);
+      haze.rotation.z = -t.lean * 0.4;
+      haze.rotation.x = t.lean * 0.25;
+      this.group.add(haze);
+      t.haze = haze;
+
+      // Ground ring
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(s.r * 0.35, s.r * 0.95, 20),
+        ringMat
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(s.x, groundY + 0.6, s.z);
+      this.group.add(ring);
+      t.ring = ring;
     }
 
-    const pCount = 48;
+    // More rising dust particles for air mass readability
+    const pCount = 96;
     const pGeo = new THREE.BufferGeometry();
     const positions = new Float32Array(pCount * 3);
     const pData = [];
     for (let i = 0; i < pCount; i++) {
       const th = this.thermals[i % this.thermals.length];
       const ang = Math.random() * Math.PI * 2;
-      const rr = Math.random() * th.r * 0.7;
+      const rr = Math.random() * th.r * 0.75;
       positions[i * 3] = th.x + Math.cos(ang) * rr;
       positions[i * 3 + 1] = th.groundY + Math.random() * (th.top - th.groundY);
       positions[i * 3 + 2] = th.z + Math.sin(ang) * rr;
-      pData.push({ thermal: th, speed: 1.5 + Math.random() * 2.5 });
+      pData.push({ thermal: th, speed: 1.5 + Math.random() * 2.8 });
     }
     pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     this.particles = new THREE.Points(
       pGeo,
       new THREE.PointsMaterial({
-        color: 0xf0e0a0,
-        size: 1.2,
+        color: 0xf5e8a8,
+        size: 1.8,
         transparent: true,
-        opacity: 0.28,
+        opacity: 0.38,
         depthWrite: false,
         sizeAttenuation: true,
       })

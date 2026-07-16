@@ -1,12 +1,19 @@
 /**
- * Lightweight localStorage prefs (last scenario, camera mode).
+ * Lightweight localStorage prefs.
  */
 
 const KEY = 'glider-sim-prefs-v1';
 
 /**
- * @returns {{ scenarioId?: string, cameraMode?: number }}
+ * @typedef {object} Prefs
+ * @property {string} [scenarioId]
+ * @property {number} [cameraMode]
+ * @property {number} [volume] 0..1 master audio
+ * @property {'kmh'|'kt'} [units]
+ * @property {boolean} [invertPitch]
  */
+
+/** @returns {Prefs} */
 export function loadPrefs() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -19,7 +26,7 @@ export function loadPrefs() {
 }
 
 /**
- * @param {Record<string, unknown>} partial
+ * @param {Partial<Prefs>} partial
  */
 export function savePrefs(partial) {
   try {
@@ -28,4 +35,20 @@ export function savePrefs(partial) {
   } catch {
     /* private mode / quota */
   }
+}
+
+/** @returns {number} 0..1 */
+export function getVolume() {
+  const v = loadPrefs().volume;
+  return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.7;
+}
+
+/** @returns {'kmh'|'kt'} */
+export function getUnits() {
+  return loadPrefs().units === 'kt' ? 'kt' : 'kmh';
+}
+
+/** @returns {boolean} */
+export function getInvertPitch() {
+  return !!loadPrefs().invertPitch;
 }
