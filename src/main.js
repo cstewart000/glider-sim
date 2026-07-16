@@ -27,6 +27,7 @@ import { flightAudio } from './flightAudio.js';
 import {
   SCENARIO_LIST, setActiveScenario, getActiveScenario, scenarioRuntime,
   isLaunchAttached, releaseLaunch, scoreLanding, scoreCrossCountry,
+  scoreSandbox,
 } from './scenarios.js';
 import {
   initScenarioVisuals, setScenarioVisualMode, updateScenarioVisuals,
@@ -704,8 +705,19 @@ function tick(_time, frame) {
     // Rolling ends when stopped → 3s hold then menu
     if (!physics.alive) {
       // Finalize scores before leaving the sim loop
-      if (!scenarioRuntime.landScored && !scenarioRuntime.xcActive) {
-        // Landing scenario or any free-flight arrival
+      if (scenarioRuntime.sandboxActive && !scenarioRuntime.sandboxScored) {
+        scenarioRuntime.sandboxScore = scoreSandbox(physics);
+        scenarioRuntime.sandboxScored = true;
+        // Also grade the arrival itself
+        if (!scenarioRuntime.landScored) {
+          scenarioRuntime.landScore = scoreLanding(physics);
+          scenarioRuntime.landScored = true;
+          if (scenarioRuntime.landScore?.grade) {
+            physics.landingQuality = scenarioRuntime.landScore.grade;
+          }
+        }
+      } else if (!scenarioRuntime.landScored && !scenarioRuntime.xcActive) {
+        // Landing scenario or other free-flight arrival
         scenarioRuntime.landScore = scoreLanding(physics);
         scenarioRuntime.landScored = true;
         if (scenarioRuntime.landScore?.grade) {

@@ -39,6 +39,11 @@ const el = {
   xcDist: document.getElementById('xc-dist'),
   xcBrg: document.getElementById('xc-brg'),
   xcLegs: document.getElementById('xc-legs'),
+  sandboxPanel: document.getElementById('sandbox-panel'),
+  sandboxTitle: document.getElementById('sandbox-title'),
+  sandboxTime: document.getElementById('sandbox-time'),
+  sandboxAlt: document.getElementById('sandbox-alt'),
+  sandboxTrack: document.getElementById('sandbox-track'),
   hud: document.getElementById('hud'),
   fps: document.getElementById('fps'),
   title: document.getElementById('title-screen'),
@@ -82,6 +87,7 @@ export function showTitle() {
   el.crash.classList.add('hidden');
   if (el.landPanel) el.landPanel.classList.add('hidden');
   if (el.towPanel) el.towPanel.classList.add('hidden');
+  if (el.sandboxPanel) el.sandboxPanel.classList.add('hidden');
   hideCrashFx();
   crashSeq = null;
 }
@@ -149,21 +155,43 @@ export function isResultHoldActive() {
 
 export function showLanding(physics, afterCrash = false) {
   el.crash.classList.remove('hidden');
-  // Prefer scored debrief (landing or XC); else physics quality
-  const scored = scenarioRuntime.landScore || scenarioRuntime.xcScore;
-  const q = scored?.grade || physics.landingQuality;
-  el.crash.classList.toggle('is-crash', q === 'crash' || q === 'F' || afterCrash);
+  // Prefer sandbox soar score, then landing/XC; else physics quality
+  const sandbox = scenarioRuntime.sandboxScore;
+  const scored =
+    sandbox || scenarioRuntime.landScore || scenarioRuntime.xcScore;
+  const landQ = scenarioRuntime.landScore?.grade || physics.landingQuality;
+  const q = sandbox?.grade || scored?.grade || physics.landingQuality;
+  el.crash.classList.toggle(
+    'is-crash',
+    landQ === 'crash' || q === 'F' || afterCrash
+  );
   if (el.crashTitle) {
-    if (scored && scenarioRuntime.xcScore) {
+    if (sandbox) {
+      const label =
+        sandbox.grade === 'soar'
+          ? 'SOAR'
+          : sandbox.grade === 'cruise'
+            ? 'CRUISE'
+            : sandbox.grade === 'hop'
+              ? 'HOP'
+              : 'SANDBOX';
+      el.crashTitle.textContent = `${label} · ${sandbox.total}`;
+    } else if (scored && scenarioRuntime.xcScore) {
       el.crashTitle.textContent = scenarioRuntime.xcDone
         ? `TASK · ${scored.total}`
         : `XC · ${scored.total}`;
-    } else if (scored && q !== 'crash' && scored.total != null) {
+    } else if (scored && landQ !== 'crash' && scored.total != null) {
       const label =
-        q === 'runway' ? 'RUNWAY' : q === 'good' ? 'GOOD' : q === 'rough' ? 'ROUGH' : 'LANDED';
+        landQ === 'runway'
+          ? 'RUNWAY'
+          : landQ === 'good'
+            ? 'GOOD'
+            : landQ === 'rough'
+              ? 'ROUGH'
+              : 'LANDED';
       el.crashTitle.textContent = `${label} · ${scored.total}`;
     } else {
-      el.crashTitle.textContent = q === 'crash' ? 'CRASH' : 'LANDED';
+      el.crashTitle.textContent = landQ === 'crash' ? 'CRASH' : 'LANDED';
     }
   }
   const msgs = {
@@ -171,16 +199,32 @@ export function showLanding(physics, afterCrash = false) {
     good: 'Nice landing! Soft as a feather.',
     rough: 'Rough landing — you walked away.',
     crash: 'Hard impact. The wing survives. Barely.',
+    soar: 'Great free flight — you worked the sky.',
+    cruise: 'Solid cruise — more climb next time.',
+    hop: 'Short hop — thermals are your friends.',
+    brief: 'Brief flight — try staying with the lift.',
+    explore: 'Nice explore.',
     A: 'Excellent cross-country flight.',
     B: 'Solid triangle — good soaring.',
     C: 'Partial task — keep working the lift.',
     D: 'Short hop — try the thermals next time.',
     F: 'Task incomplete.',
   };
-  if (scored?.debrief?.length) {
-    el.crashMsg.textContent = scored.debrief.slice(0, 3).join(' ');
+  // Merge sandbox soaring debrief + landing lines when both exist
+  const lines = [];
+  if (sandbox?.debrief?.length) lines.push(...sandbox.debrief);
+  if (
+    scenarioRuntime.landScore?.debrief?.length &&
+    sandbox
+  ) {
+    lines.push(...scenarioRuntime.landScore.debrief.slice(0, 2));
+  } else if (scored?.debrief?.length && !sandbox) {
+    lines.push(...scored.debrief);
+  }
+  if (lines.length) {
+    el.crashMsg.textContent = lines.slice(0, 3).join(' ');
   } else {
-    el.crashMsg.textContent = msgs[q] || msgs.crash;
+    el.crashMsg.textContent = msgs[q] || msgs[landQ] || msgs.crash;
   }
   const mins = Math.floor(physics.flightTime / 60);
   const secs = Math.floor(physics.flightTime % 60);
@@ -193,15 +237,16 @@ export function showLanding(physics, afterCrash = false) {
     `Time aloft: <b>${mins}:${secs.toString().padStart(2, '0')}</b><br>` +
     `Max altitude: <b>${physics.maxAlt.toFixed(0)} m</b><br>` +
     `Distance: <b>${(physics.distance / 1000).toFixed(2)} km</b>${roll}${strip}`;
-  if (scored?.debrief?.length) {
+  if (lines.length) {
     stats +=
       `<br><br><b>Debrief</b><ul style="text-align:left;margin:8px 0 0 1.1em;padding:0;font-size:13px;line-height:1.45">` +
-      scored.debrief.map((d) => `<li>${d}</li>`).join('') +
+      lines.slice(0, 6).map((d) => `<li>${d}</li>`).join('') +
       `</ul>`;
   }
   el.flightStats.innerHTML = stats;
 
   if (el.landPanel) el.landPanel.classList.add('hidden');
+  if (el.sandboxPanel) el.sandboxPanel.classList.add('hidden');
 
   if (afterCrash && el.crashFx) {
     // Results sit on black; leave blackout full behind panel
@@ -414,6 +459,40 @@ export function updateHUD(physics, dt) {
           lamp.classList.toggle('white', i < w);
           lamp.classList.toggle('red', i >= w);
         });
+      }
+    }
+  }
+
+  // Free-flight sandbox stats
+  if (el.sandboxPanel) {
+    const onSb =
+      scenarioRuntime.sandboxActive &&
+      physics.alive &&
+      !physics.rolling &&
+      !physics.wingStrike;
+    el.sandboxPanel.classList.toggle('hidden', !onSb);
+    if (onSb) {
+      const t = physics.flightTime || 0;
+      const mins = Math.floor(t / 60);
+      const secs = Math.floor(t % 60);
+      if (el.sandboxTime) {
+        el.sandboxTime.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      }
+      const maxY = Math.max(
+        scenarioRuntime.sandboxMaxAlt || 0,
+        physics.maxAlt || 0
+      );
+      const startY = scenarioRuntime.sandboxStartY || maxY;
+      const gain = Math.max(0, maxY - startY);
+      if (el.sandboxAlt) {
+        el.sandboxAlt.textContent =
+          gain > 5
+            ? `MAX ${maxY.toFixed(0)} m · +${gain.toFixed(0)}`
+            : `MAX ${maxY.toFixed(0)} m`;
+      }
+      const km = (scenarioRuntime.sandboxTrack || 0) / 1000;
+      if (el.sandboxTrack) {
+        el.sandboxTrack.textContent = `${km.toFixed(1)} km`;
       }
     }
   }

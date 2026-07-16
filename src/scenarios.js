@@ -109,6 +109,17 @@ export const scenarioRuntime = {
   /** @type {null | { total: number, grade: string, debrief: string[], detail: object }} */
   xcScore: null,
   xcScored: false,
+  // —— Sandbox free flight ——
+  sandboxActive: false,
+  /** Start altitude (m) for height-gain debrief */
+  sandboxStartY: 0,
+  sandboxMaxAlt: 0,
+  sandboxTrack: 0,
+  sandboxLastX: 0,
+  sandboxLastZ: 0,
+  /** @type {null | { total: number, grade: string, debrief: string[], detail: object }} */
+  sandboxScore: null,
+  sandboxScored: false,
 };
 
 /**
@@ -529,6 +540,121 @@ export function scoreLanding(physics) {
   };
 }
 
+/**
+ * Soft free-flight debrief — rewards staying aloft and using lift (no task).
+ * @param {import('./physics.js').GliderPhysics} physics
+ */
+export function scoreSandbox(physics) {
+  const debrief = [];
+  const detail = {};
+  let total = 0;
+
+  const timeMin = (physics.flightTime || 0) / 60;
+  const trackKm = (scenarioRuntime.sandboxTrack || physics.distance || 0) / 1000;
+  const startY = scenarioRuntime.sandboxStartY || RUNWAY.y + 200;
+  const maxY = Math.max(
+    scenarioRuntime.sandboxMaxAlt || 0,
+    physics.maxAlt || physics.position.y
+  );
+  const heightGain = Math.max(0, maxY - startY);
+  const maxAgl = Math.max(0, maxY - RUNWAY.y);
+
+  // Time aloft (max 35)
+  let timePts = 4;
+  if (timeMin >= 12) timePts = 35;
+  else if (timeMin >= 8) timePts = 28;
+  else if (timeMin >= 5) timePts = 20;
+  else if (timeMin >= 3) timePts = 12;
+  else if (timeMin >= 1.5) timePts = 8;
+  detail.time = timePts;
+  total += timePts;
+  debrief.push(`Aloft ${timeMin.toFixed(1)} min.`);
+
+  // Height gain / using thermals (max 30)
+  let climbPts = 4;
+  if (heightGain > 180) {
+    climbPts = 30;
+    debrief.push(`Climbed ${heightGain.toFixed(0)} m — solid soaring.`);
+  } else if (heightGain > 100) {
+    climbPts = 22;
+    debrief.push(`Gained ${heightGain.toFixed(0)} m in lift.`);
+  } else if (heightGain > 40) {
+    climbPts = 14;
+    debrief.push(`Some climb (+${heightGain.toFixed(0)} m).`);
+  } else {
+    debrief.push('Little height gain — circle the yellow thermals.');
+  }
+  detail.climb = climbPts;
+  total += climbPts;
+
+  // Distance flown (max 20)
+  let distPts = 3;
+  if (trackKm > 12) distPts = 20;
+  else if (trackKm > 7) distPts = 14;
+  else if (trackKm > 3) distPts = 9;
+  else if (trackKm > 1) distPts = 5;
+  detail.distance = distPts;
+  total += distPts;
+  debrief.push(`Track ${trackKm.toFixed(1)} km.`);
+
+  // Arrival quality (max 15)
+  if (physics.landingQuality === 'crash') {
+    debrief.push('Ended in a crash.');
+    total = Math.max(0, total - 10);
+    detail.arrival = 0;
+  } else if (physics.onRunway) {
+    total += 15;
+    detail.arrival = 15;
+    debrief.push('Back on the runway.');
+  } else if (physics.landingQuality === 'good' || physics.landingQuality === 'runway') {
+    total += 12;
+    detail.arrival = 12;
+    debrief.push('Survivable field landing.');
+  } else if (!physics.alive) {
+    total += 6;
+    detail.arrival = 6;
+    debrief.push('Out-landing — still counts as practice.');
+  } else {
+    detail.arrival = 5;
+    total += 5;
+  }
+
+  total = THREE.MathUtils.clamp(Math.round(total), 0, 100);
+  let grade = 'explore';
+  if (total >= 80) grade = 'soar';
+  else if (total >= 55) grade = 'cruise';
+  else if (total >= 30) grade = 'hop';
+  else grade = 'brief';
+
+  detail.maxAgl = maxAgl;
+  detail.heightGain = heightGain;
+  detail.timeMin = timeMin;
+  detail.trackKm = trackKm;
+
+  return { total, grade, debrief: debrief.slice(0, 6), detail };
+}
+
+/**
+ * Track sandbox free-flight stats each frame.
+ * @param {import('./physics.js').GliderPhysics} physics
+ * @param {number} dt
+ */
+function updateSandbox(physics, dt) {
+  if (!scenarioRuntime.sandboxActive || !physics?.alive) return;
+  const x = physics.position.x;
+  const z = physics.position.z;
+  const dx = x - scenarioRuntime.sandboxLastX;
+  const dz = z - scenarioRuntime.sandboxLastZ;
+  const step = Math.hypot(dx, dz);
+  if (step < 80) scenarioRuntime.sandboxTrack += step;
+  scenarioRuntime.sandboxLastX = x;
+  scenarioRuntime.sandboxLastZ = z;
+  scenarioRuntime.sandboxMaxAlt = Math.max(
+    scenarioRuntime.sandboxMaxAlt,
+    physics.position.y
+  );
+}
+
 const _tugFwd = new THREE.Vector3();
 const _tugUp = new THREE.Vector3();
 const _tugRight = new THREE.Vector3();
@@ -860,6 +986,46 @@ export const SCENARIOS = {
     },
   },
 
+  sandbox: {
+    id: 'sandbox',
+    name: 'Sandbox',
+    blurb:
+      'Free flight over the home field. Hunt yellow thermals, manage energy, land when you like — no task, just soaring.',
+    gear: 0,
+    terrain: 'airfield',
+    spawn() {
+      // High release NW of the strip — room to wander into thermal fields
+      const x0 = -80;
+      const z0 = RUNWAY.z - 120;
+      const ground = terrainHeight(x0, z0);
+      const y0 = Math.max(RUNWAY.y + 420, ground + 340);
+      // Cruise along runway heading (−Z) at best L/D-ish speed
+      const spd = 26;
+      return makeSpawn(x0, y0, z0, 0, -0.4, -spd, -0.025, 0);
+    },
+    onStart(physics) {
+      scenarioRuntime.phase = 'flight';
+      scenarioRuntime.released = true;
+      scenarioRuntime.t = 0;
+      scenarioRuntime.landingActive = false;
+      scenarioRuntime.xcActive = false;
+      scenarioRuntime.sandboxActive = true;
+      scenarioRuntime.sandboxScored = false;
+      scenarioRuntime.sandboxScore = null;
+      scenarioRuntime.sandboxTrack = 0;
+      scenarioRuntime.sandboxMaxAlt = physics?.position.y || 0;
+      scenarioRuntime.sandboxStartY = physics?.position.y || RUNWAY.y + 420;
+      scenarioRuntime.sandboxLastX = physics?.position.x || 0;
+      scenarioRuntime.sandboxLastZ = physics?.position.z || 0;
+      if (physics) physics.landingQuality = 'crash';
+    },
+    update(physics, dt) {
+      if (!scenarioRuntime.sandboxActive) return;
+      scenarioRuntime.t += dt;
+      updateSandbox(physics, dt);
+    },
+  },
+
   landing: {
     id: 'landing',
     name: 'Landing',
@@ -892,6 +1058,7 @@ export const SCENARIOS = {
       scenarioRuntime.landTouchSink = 0;
       scenarioRuntime.landPhase = 'base';
       scenarioRuntime.xcActive = false;
+      scenarioRuntime.sandboxActive = false;
       if (physics) {
         physics.landingQuality = 'crash';
       }
@@ -929,6 +1096,7 @@ export const SCENARIOS = {
       scenarioRuntime.released = true;
       scenarioRuntime.t = 0;
       scenarioRuntime.landingActive = false;
+      scenarioRuntime.sandboxActive = false;
       scenarioRuntime.xcActive = true;
       scenarioRuntime.xcWp = 0;
       scenarioRuntime.xcLegs = 0;
@@ -1419,12 +1587,16 @@ export const SCENARIOS = {
       scenarioRuntime.phase = 'flight';
       scenarioRuntime.released = true;
       scenarioRuntime.t = 0;
+      scenarioRuntime.sandboxActive = false;
+      scenarioRuntime.landingActive = false;
+      scenarioRuntime.xcActive = false;
     },
     // Orographic lift is applied via sampleRidgeLift in the physics thermal sample
   },
 };
 
 export const SCENARIO_LIST = [
+  SCENARIOS.sandbox,
   SCENARIOS.cable,
   SCENARIOS.tow,
   SCENARIOS.ridge,
@@ -1432,10 +1604,10 @@ export const SCENARIO_LIST = [
   SCENARIOS.crosscountry,
 ];
 
-export let activeScenario = SCENARIOS.ridge;
+export let activeScenario = SCENARIOS.sandbox;
 
 export function setActiveScenario(id) {
-  activeScenario = SCENARIOS[id] || SCENARIOS.ridge;
+  activeScenario = SCENARIOS[id] || SCENARIOS.sandbox;
   scenarioRuntime.id = activeScenario.id;
   // Clear session flags when switching scenarios in the menu
   if (activeScenario.id !== 'landing') {
@@ -1448,6 +1620,11 @@ export function setActiveScenario(id) {
     scenarioRuntime.xcScore = null;
     scenarioRuntime.xcScored = false;
     scenarioRuntime.xcDone = false;
+  }
+  if (activeScenario.id !== 'sandbox') {
+    scenarioRuntime.sandboxActive = false;
+    scenarioRuntime.sandboxScore = null;
+    scenarioRuntime.sandboxScored = false;
   }
   return activeScenario;
 }

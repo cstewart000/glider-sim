@@ -445,6 +445,45 @@ html, body, #app {
 #landing-panel.path-high { border-color: rgba(200, 160, 40, 0.8); }
 #landing-panel.path-low { border-color: rgba(200, 80, 60, 0.85); }
 
+/* Free-flight sandbox panel */
+#sandbox-panel {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 160px;
+  padding: 10px 16px 12px;
+  border: 1.5px solid rgba(80, 160, 140, 0.55);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  text-align: center;
+  pointer-events: none;
+  z-index: 6;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #2a5a50;
+}
+#sandbox-panel.hidden { display: none; }
+#sandbox-title {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  margin-bottom: 4px;
+  color: #1a4a40;
+}
+#sandbox-time {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  color: #0a6a58;
+  margin: 2px 0;
+}
+#sandbox-alt, #sandbox-track {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #3a6a60;
+  font-weight: 650;
+}
+
 /* Cross-country task panel */
 #xc-panel {
   position: absolute;
