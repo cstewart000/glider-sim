@@ -364,7 +364,8 @@ const _tmpCam = new THREE.Vector3();
 function cockpitEyeFromPose(pos, quat, out) {
   _fwd.set(0, 0, -1).applyQuaternion(quat);
   _up.set(0, 1, 0).applyQuaternion(quat);
-  out.copy(pos).addScaledVector(_up, 0.45).addScaledVector(_fwd, 0.08);
+  // Seat further aft so the stick sits clearly forward of the pilot
+  out.copy(pos).addScaledVector(_up, 0.48).addScaledVector(_fwd, -0.22);
   return out;
 }
 

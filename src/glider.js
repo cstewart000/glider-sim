@@ -790,11 +790,11 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
   // Rear bulkhead behind seat
   addPart(new THREE.BoxGeometry(0.95, 0.55, 0.06), w, 0, -0.12, 0.62);
 
-  // —— Seat ——
-  addPart(new THREE.BoxGeometry(0.42, 0.06, 0.4), off, 0, -0.3, 0.28);
-  addPart(new THREE.BoxGeometry(0.4, 0.38, 0.06), off, 0, -0.08, 0.48);
+  // —— Seat (further aft so stick is clearly forward of the pilot) ——
+  addPart(new THREE.BoxGeometry(0.42, 0.06, 0.42), off, 0, -0.3, 0.48);
+  addPart(new THREE.BoxGeometry(0.4, 0.42, 0.06), off, 0, -0.06, 0.68);
   // Simple seat pad stripe
-  addPart(new THREE.BoxGeometry(0.36, 0.03, 0.32), dk, 0, -0.26, 0.28);
+  addPart(new THREE.BoxGeometry(0.36, 0.03, 0.34), dk, 0, -0.26, 0.48);
 
   // —— Instrument panel shelf (below eye, opens forward view) ——
   addPart(new THREE.BoxGeometry(0.88, 0.05, 0.28), w, 0, 0.02, -0.55);
@@ -923,10 +923,10 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
     addEdges(root, 12);
   }
 
-  // —— Control stick (VR-grabbable grip) ——
+  // —— Control stick (VR-grabbable grip) — forward of seat ——
   const stickPivot = new THREE.Group();
   stickPivot.name = 'stickPivot';
-  stickPivot.position.set(0, -0.28, 0.05);
+  stickPivot.position.set(0, -0.28, -0.12);
   cockpit.add(stickPivot);
   const stickBase = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.1), dk);
   stickBase.position.y = -0.02;
@@ -955,50 +955,54 @@ function buildCockpitInterior({ white, offWhite, dark, red, accent }) {
   addEdges(shaft, 18);
   addEdges(grip, 12);
 
-  // —— Airbrake lever (left) ——
+  // —— Airbrake lever (left) — rotates on X, continuous 0…1 ——
   const brakeLever = new THREE.Group();
   brakeLever.name = 'brakeLever';
-  brakeLever.position.set(-0.38, -0.12, -0.15);
+  brakeLever.position.set(-0.4, -0.08, -0.05);
   cockpit.add(brakeLever);
-  const brakeMount = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.08), dk);
+  const brakeMount = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.1), dk);
   brakeLever.add(brakeMount);
-  const brakeArm = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.18, 0.028), acc);
-  brakeArm.position.set(0, 0.09, 0);
+  // Slot hint under lever (shows travel)
+  const brakeSlot = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.015, 0.16), off);
+  brakeSlot.position.set(-0.4, -0.1, -0.02);
+  cockpit.add(brakeSlot);
+  const brakeArm = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.16, 0.03), acc);
+  brakeArm.position.set(0, 0.08, 0);
   brakeLever.add(brakeArm);
-  const brakeKnob = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), gripMat);
-  brakeKnob.position.set(0, 0.2, 0);
+  const brakeKnob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), gripMat);
+  brakeKnob.position.set(0, 0.18, 0);
   brakeKnob.name = 'brakeKnob';
   brakeLever.add(brakeKnob);
   const brakeGrab = new THREE.Mesh(
-    new THREE.SphereGeometry(0.08, 8, 6),
+    new THREE.SphereGeometry(0.09, 8, 6),
     new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0 })
   );
-  brakeGrab.position.set(0, 0.2, 0);
+  brakeGrab.position.set(0, 0.18, 0);
   brakeGrab.name = 'brakeGrab';
   brakeLever.add(brakeGrab);
   addEdges(brakeMount, 12);
   addEdges(brakeArm, 12);
   addEdges(brakeKnob, 12);
 
-  // —— Gear lever (right) ——
+  // —— Gear lever (right) — full throw both ways (down ↔ up) ——
   const gearLever = new THREE.Group();
   gearLever.name = 'gearLever';
-  gearLever.position.set(0.38, -0.12, -0.15);
+  gearLever.position.set(0.4, -0.08, -0.05);
   cockpit.add(gearLever);
-  const gearMount = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.08), dk);
+  const gearMount = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.1), dk);
   gearLever.add(gearMount);
-  const gearArm = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.18, 0.028), w);
-  gearArm.position.set(0, 0.09, 0);
+  const gearArm = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.16, 0.03), w);
+  gearArm.position.set(0, 0.08, 0);
   gearLever.add(gearArm);
-  const gearKnob = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), dk);
-  gearKnob.position.set(0, 0.2, 0);
+  const gearKnob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), dk);
+  gearKnob.position.set(0, 0.18, 0);
   gearKnob.name = 'gearKnob';
   gearLever.add(gearKnob);
   const gearGrab = new THREE.Mesh(
-    new THREE.SphereGeometry(0.08, 8, 6),
+    new THREE.SphereGeometry(0.09, 8, 6),
     new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0 })
   );
-  gearGrab.position.set(0, 0.2, 0);
+  gearGrab.position.set(0, 0.18, 0);
   gearGrab.name = 'gearGrab';
   gearLever.add(gearGrab);
   addEdges(gearMount, 12);
@@ -1125,12 +1129,14 @@ export function updateControlSurfaces(glider, ctrl, dt = 0.016) {
   }
   const brakeLever = glider.userData.brakeLever;
   if (brakeLever && !ctrl.xrBrakeGrab) {
-    brakeLever.rotation.x = -0.15 - s.brakes * 1.0;
+    // Continuous 0…1 anywhere between closed and full open
+    const b = THREE.MathUtils.clamp(s.brakes, 0, 1);
+    brakeLever.rotation.x = -0.12 - b * 1.05;
   }
   const gearLever = glider.userData.gearLever;
   if (gearLever && !ctrl.xrGearGrab) {
     const down = THREE.MathUtils.clamp(s.gear, 0, 1);
-    gearLever.rotation.x = -0.15 - (1 - down) * 1.05;
+    gearLever.rotation.x = -0.12 - (1 - down) * 1.08;
   }
   const releaseLever = glider.userData.releaseLever;
   if (releaseLever && !ctrl.xrReleaseGrab) {

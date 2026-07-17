@@ -54,12 +54,14 @@ const _m = new THREE.Matrix4();
 const _e = new THREE.Euler();
 const _local = new THREE.Vector3();
 
-/** Stick throw for full deflection (m) — larger = less sensitive */
-const STICK_THROW = 0.11;
+/** Stick angle (rad) for full pitch/roll deflection */
+const STICK_ANGLE_FULL = 0.55; // ~31°
 /** Max twist rad for full rudder */
-const STICK_TWIST_MAX = 0.7; // ~40°
+const STICK_TWIST_MAX = 0.65; // ~37°
 /** Soft response curve exponent (1 = linear, >1 gentler near center) */
-const STICK_CURVE = 1.15;
+const STICK_CURVE = 1.08;
+/** Lever travel for full airbrake / gear (m along swing) */
+const LEVER_THROW = 0.14;
 
 let gearLatched = false;
 let releaseLatched = false;
@@ -369,8 +371,10 @@ function tryGrab(handIndex) {
   grip.getWorldPosition(_v);
   g.root.getWorldPosition(_v2);
 
-  // Local offset of hand relative to root at grab start
-  g.root.worldToLocal(_local.copy(_v));
+  // Hand in parent (cockpit) space at grab start
+  g.root.parent.updateWorldMatrix(true, false);
+  _m.copy(g.root.parent.matrixWorld).invert();
+  _local.copy(_v).applyMatrix4(_m);
 
   let twist0 = 0;
   if (grip) {
@@ -387,6 +391,9 @@ function tryGrab(handIndex) {
     startGear: controls.gear,
     startBrake: controls.brakes,
     startReleaseZ: g.root.position.z,
+    // Along-track for levers (cockpit-local hand at grab)
+    startHandY: _local.y,
+    startHandZ: _local.z,
   };
 
   // Soft haptic if available
@@ -398,11 +405,14 @@ function releaseGrab(handIndex) {
   if (!g) return;
   hands[handIndex].grabbing = null;
   if (activeGrab && activeGrab.hand === handIndex) {
-    // Snap gear to up/down on release
+    // Soft-snap gear only when clearly past midpoint (keeps both directions usable)
     if (g.type === 'gear') {
-      controls.gear = controls.gear > 0.5 ? 1 : 0;
+      if (controls.gear > 0.62) controls.gear = 1;
+      else if (controls.gear < 0.38) controls.gear = 0;
+      // else leave intermediate for animation; surfaces use continuous value
       controls.gearToggle = true;
     }
+    // Brakes: leave continuous value (any position 0…1)
     activeGrab = null;
   }
   controls.xrStickGrab = false;
@@ -424,69 +434,67 @@ function driveGrab(handIndex, dt) {
 
   if (g.type === 'stick') {
     controls.xrStickGrab = true;
-    // Hand position in stick root parent (cockpit) for deflection from pivot
+    // Hand in cockpit space; measure tilt of pivot→hand vs vertical
     const pivot = g.root;
     pivot.parent.updateWorldMatrix(true, false);
     _m.copy(pivot.parent.matrixWorld).invert();
     _local.copy(_v).applyMatrix4(_m);
-    // Stick pivot local position
     const px = pivot.position.x;
     const py = pivot.position.y;
     const pz = pivot.position.z;
-    // Offset from pivot toward grip (ideal grip ~0.42 above pivot)
+    // Vector from stick base to hand
     const dx = _local.x - px;
-    const dy = _local.y - py;
+    const dy = Math.max(0.06, _local.y - py); // avoid singularity when hand low
     const dz = _local.z - pz;
-    // Pitch: pull aft (+Z body) / push forward (−Z) — proportional
-    // Roll: hand left/right (X)
-    let rollRaw = THREE.MathUtils.clamp(dx / STICK_THROW, -1.2, 1.2);
-    let pitchRaw = THREE.MathUtils.clamp(dz / STICK_THROW, -1.2, 1.2);
-    // Also blend vertical: lifting hand a bit = slight nose up
-    pitchRaw += THREE.MathUtils.clamp((dy - 0.38) / STICK_THROW, -0.35, 0.35);
-    rollRaw = curveAxis(rollRaw);
-    pitchRaw = curveAxis(pitchRaw);
+    // Angle-based: left/right of vertical → roll; fore/aft of vertical → pitch
+    // +X right = bank right; +Z aft (pull) = nose up
+    let rollRaw = Math.atan2(dx, dy) / STICK_ANGLE_FULL;
+    let pitchRaw = Math.atan2(dz, dy) / STICK_ANGLE_FULL;
+    rollRaw = curveAxis(THREE.MathUtils.clamp(rollRaw, -1.35, 1.35));
+    pitchRaw = curveAxis(THREE.MathUtils.clamp(pitchRaw, -1.35, 1.35));
     controls.roll = THREE.MathUtils.clamp(rollRaw, -1, 1);
     controls.pitch = THREE.MathUtils.clamp(pitchRaw, -1, 1);
 
-    // Twist grip for yaw (rotation around world-up of stick / body Y)
+    // Twist grip for yaw
     grip.getWorldQuaternion(_q);
     const twist = extractTwistAroundY(_q);
     let yawRaw = (twist - activeGrab.twist0) / STICK_TWIST_MAX;
-    yawRaw = curveAxis(yawRaw);
+    yawRaw = curveAxis(THREE.MathUtils.clamp(yawRaw, -1.35, 1.35));
     controls.yaw = THREE.MathUtils.clamp(yawRaw, -1, 1);
 
     // Drive stick mesh 1:1 with hand deflection (visual)
-    pivot.rotation.z = -controls.roll * 0.45;
-    pivot.rotation.x = controls.pitch * 0.5;
+    pivot.rotation.z = -controls.roll * 0.5;
+    pivot.rotation.x = controls.pitch * 0.55;
     pivot.rotation.y = -controls.yaw * 0.35;
   } else if (g.type === 'brake') {
+    // Continuous 0…1 — relative slide from grab, both directions
     controls.xrBrakeGrab = true;
-    // Map hand height / fore-aft relative to lever mount → 0..1 brakes
     g.root.parent.updateWorldMatrix(true, false);
     _m.copy(g.root.parent.matrixWorld).invert();
     _local.copy(_v).applyMatrix4(_m);
-    // Lever at rest rotation.x ≈ -0.15; full ≈ -1.15
-    // Hand y relative to lever base: lower hand → more brakes
-    const baseY = g.root.position.y;
-    const baseZ = g.root.position.z;
-    const dy = _local.y - baseY;
-    const dz = _local.z - baseZ;
-    // Forward (−z) and down (−y) increase brakes
-    let b = (-dy * 2.2 + -dz * 1.5 + 0.35);
+    // Forward (−Z) and/or down (−Y) opens brakes; reverse closes
+    const dFwd = activeGrab.startHandZ - _local.z; // hand more forward → +
+    const dDown = activeGrab.startHandY - _local.y; // hand lower → +
+    const delta = (dFwd * 0.65 + dDown * 0.55) / LEVER_THROW;
+    let b = activeGrab.startBrake + delta;
     b = THREE.MathUtils.clamp(b, 0, 1);
     controls.brakes = b;
-    g.root.rotation.x = -0.15 - b * 1.0;
+    // Visual: stowed −0.12 → full open −1.15
+    g.root.rotation.x = -0.12 - b * 1.05;
   } else if (g.type === 'gear') {
+    // Continuous both ways: push down/forward = DN (1), pull up/aft = UP (0)
     controls.xrGearGrab = true;
     g.root.parent.updateWorldMatrix(true, false);
     _m.copy(g.root.parent.matrixWorld).invert();
     _local.copy(_v).applyMatrix4(_m);
-    const baseY = g.root.position.y;
-    // Pull aft/up → gear up (0); push down/forward → gear down (1)
-    const dy = _local.y - baseY;
-    let gear = THREE.MathUtils.clamp(0.55 + dy * 3.5, 0, 1);
+    const dDown = activeGrab.startHandY - _local.y; // lower hand → gear down
+    const dFwd = activeGrab.startHandZ - _local.z; // forward → gear down
+    const delta = (dDown * 0.7 + dFwd * 0.45) / LEVER_THROW;
+    let gear = activeGrab.startGear + delta;
+    gear = THREE.MathUtils.clamp(gear, 0, 1);
     controls.gear = gear;
-    g.root.rotation.x = -0.15 - (1 - gear) * 1.05;
+    // Visual: DN −0.12 → UP −1.2
+    g.root.rotation.x = -0.12 - (1 - gear) * 1.08;
   } else if (g.type === 'release') {
     controls.xrReleaseGrab = true;
     g.root.parent.updateWorldMatrix(true, false);
