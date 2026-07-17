@@ -370,21 +370,35 @@ function updateCamera(dt, renderPos, renderQuat) {
   // —— WebXR: rig follows glider; headset provides look ——
   if (isXRPresenting()) {
     setCockpitOverlayVisible(false);
-    // Title / pause menu: hide glider so cockpit doesn't block the VR UI
-    if (isVRMenuVisible() || !running) {
-      setCockpitVisible(gliderMesh, false);
+    // Menu / title: hard-hide entire glider (cockpit must not occlude UI)
+    const menuMode = isVRMenuVisible() || !running;
+    if (menuMode) {
       gliderMesh.visible = false;
+      gliderMesh.traverse((o) => {
+        if (o.isMesh || o.isLineSegments || o.isPoints) o.visible = false;
+      });
     } else {
+      gliderMesh.visible = true;
+      // Restore mesh visibility after menu hide
+      gliderMesh.traverse((o) => {
+        if (o.isMesh || o.isLineSegments || o.isPoints) o.visible = true;
+      });
       const external = physics.rolling || physics.wingStrike || cameraMode !== 0;
       if (external) {
         setCockpitVisible(gliderMesh, false);
-        gliderMesh.visible = true;
       } else {
         setCockpitVisible(gliderMesh, true);
-        gliderMesh.visible = true;
       }
     }
-    cockpitEyeFromPose(pos, quat, camPos);
+    // Eye: use a neutral seated pose when menu is up so UI sits cleanly ahead
+    if (menuMode) {
+      camPos.copy(pos);
+      _up.set(0, 1, 0).applyQuaternion(quat);
+      _fwd.set(0, 0, -1).applyQuaternion(quat);
+      camPos.addScaledVector(_up, 0.45).addScaledVector(_fwd, 0.05);
+    } else {
+      cockpitEyeFromPose(pos, quat, camPos);
+    }
     updateXRRig(camPos, quat);
     return;
   }
@@ -536,11 +550,16 @@ function returnToScenarioMenu() {
   ended = false;
   flightAudio.stop();
   hideCrashFx();
-  gliderMesh.visible = true;
   setCockpitOverlayVisible(false);
   showTitle();
   setXRFlying(false);
-  if (isXRPresenting()) showVRMenu();
+  if (isXRPresenting()) {
+    // Keep glider hidden while VR menu is up
+    gliderMesh.visible = false;
+    showVRMenu();
+  } else {
+    gliderMesh.visible = true;
+  }
   const sc = getActiveScenario();
   const sp = spawnForActiveScenario();
   applyScenarioWorld(sc.id, sp.position);

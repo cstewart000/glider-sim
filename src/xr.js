@@ -193,6 +193,9 @@ export function initXR({
     camera.quaternion.identity();
     camera.near = 0.04;
     camera.far = 3500;
+    // Camera sees world (0) + UI layer (2)
+    camera.layers.enable(0);
+    camera.layers.enable(2);
     camera.updateProjectionMatrix();
     document.documentElement.classList.add('xr-active');
     // Show menu if not in flight
@@ -206,6 +209,7 @@ export function initXR({
     camera.position.set(0, 0, 0);
     camera.quaternion.identity();
     camera.rotation.set(0, 0, 0);
+    camera.layers.set(0);
     document.documentElement.classList.remove('xr-active');
     clearXRAxes();
     releaseGrab(0);
@@ -703,55 +707,51 @@ function buildVRMenu() {
   menuGroup = new THREE.Group();
   menuGroup.name = 'xrMenu';
   menuGroup.visible = false;
-  // Comfortable seated distance — clear of cockpit when glider hidden
-  menuGroup.position.set(0, -0.08, -1.05);
-  menuGroup.renderOrder = 1000;
+  // Close to the face so nothing in the world can sit in front of it
+  menuGroup.position.set(0, 0.02, -0.72);
+  menuGroup.renderOrder = 10000;
+  // Dedicated layer so we can draw UI above the world if needed
+  menuGroup.layers.set(2);
   xrRig.add(menuGroup);
 
-  // Large panel that fits 2-col scenarios + LAUNCH
   const panel = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.05, 1.15),
+    new THREE.PlaneGeometry(0.95, 1.05),
     new THREE.MeshBasicMaterial({
       color: 0xf4f6f8,
       transparent: true,
-      opacity: 0.96,
+      opacity: 0.98,
       depthTest: false,
       depthWrite: false,
       side: THREE.DoubleSide,
     })
   );
   panel.position.z = 0.005;
-  panel.renderOrder = 1000;
+  panel.renderOrder = 10000;
+  panel.layers.set(2);
   menuGroup.add(panel);
 
   const frame = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.PlaneGeometry(1.05, 1.15)),
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(0.95, 1.05)),
     new THREE.LineBasicMaterial({ color: 0x2a6a78, depthTest: false })
   );
   frame.position.z = 0.008;
-  frame.renderOrder = 1001;
+  frame.renderOrder = 10001;
+  frame.layers.set(2);
   menuGroup.add(frame);
 
-  const title = makeTextPlane('LOW POLY GLIDER', 512, 64, {
-    font: 'bold 36px system-ui,sans-serif',
+  const title = makeTextPlane('LOW POLY GLIDER', 512, 56, {
+    font: 'bold 34px system-ui,sans-serif',
     fill: '#1a4a58',
   });
-  title.scale.set(0.62, 0.09, 1);
-  title.position.set(0, 0.48, 0.02);
-  title.renderOrder = 1002;
+  title.scale.set(0.58, 0.075, 1);
+  title.position.set(0, 0.44, 0.02);
+  title.renderOrder = 10002;
+  title.layers.set(2);
   menuGroup.add(title);
-
-  const sub = makeTextPlane('Point controller · pull trigger', 512, 40, {
-    font: '22px system-ui,sans-serif',
-    fill: '#5a7080',
-  });
-  sub.scale.set(0.55, 0.055, 1);
-  sub.position.set(0, 0.39, 0.02);
-  sub.renderOrder = 1002;
-  menuGroup.add(sub);
 
   menuButtonsRoot = new THREE.Group();
   menuButtonsRoot.name = 'xrMenuButtons';
+  menuButtonsRoot.layers.set(2);
   menuGroup.add(menuButtonsRoot);
 
   rebuildMenuButtons();
@@ -760,13 +760,17 @@ function buildVRMenu() {
 function rebuildMenuButtons() {
   if (!menuGroup || !menuButtonsRoot) return;
 
-  // Clear previous buttons only
   while (menuButtonsRoot.children.length) {
     const ch = menuButtonsRoot.children[0];
     menuButtonsRoot.remove(ch);
     ch.geometry?.dispose?.();
     if (ch.material?.map) ch.material.map.dispose();
     ch.material?.dispose?.();
+    ch.traverse?.((o) => {
+      o.geometry?.dispose?.();
+      if (o.material?.map) o.material.map.dispose();
+      o.material?.dispose?.();
+    });
   }
   menuButtons = [];
 
@@ -774,13 +778,29 @@ function rebuildMenuButtons() {
     ? menuScenarios
     : [{ id: 'sandbox', name: 'Sandbox' }];
 
-  // 2-column scenario grid — keeps LAUNCH on-screen
+  // —— LAUNCH at the TOP (primary action, always visible) ——
+  const launch = makeButtonMesh('▶  LAUNCH', false, '#1a8a6a', 0.78, 0.11);
+  launch.position.set(0, 0.32, 0.03);
+  tagMenuButton(launch, 'launch');
+  menuButtonsRoot.add(launch);
+  menuButtons.push({ mesh: launch, action: 'launch' });
+
+  const sub = makeTextPlane('Then pick a scenario · trigger to click', 512, 36, {
+    font: '20px system-ui,sans-serif',
+    fill: '#5a7080',
+  });
+  sub.scale.set(0.55, 0.045, 1);
+  sub.position.set(0, 0.22, 0.03);
+  sub.layers.set(2);
+  menuButtonsRoot.add(sub);
+
+  // 2-column scenario grid below LAUNCH
   const cols = 2;
-  const btnW = 0.44;
-  const btnH = 0.07;
-  const startY = 0.28;
-  const rowH = 0.085;
-  const colGap = 0.48;
+  const btnW = 0.42;
+  const btnH = 0.065;
+  const startY = 0.12;
+  const rowH = 0.078;
+  const colGap = 0.46;
 
   items.forEach((sc, i) => {
     const col = i % cols;
@@ -794,36 +814,35 @@ function rebuildMenuButtons() {
   });
 
   const rows = Math.ceil(items.length / cols);
-  // Big LAUNCH always centered under the grid
-  const launchY = startY - rows * rowH - 0.08;
-  const launch = makeButtonMesh('▶  LAUNCH', false, '#1a8a6a', 0.72, 0.1);
-  launch.position.set(0, launchY, 0.03);
-  tagMenuButton(launch, 'launch');
-  menuButtonsRoot.add(launch);
-  menuButtons.push({ mesh: launch, action: 'launch' });
-
+  const exitY = startY - rows * rowH - 0.06;
   const exit = makeButtonMesh(
     menuFlying ? 'EXIT TO MENU' : 'EXIT VR',
     false,
     '#8a4040',
-    0.55,
-    0.065
+    0.5,
+    0.06
   );
-  exit.position.set(0, launchY - 0.11, 0.03);
+  exit.position.set(0, exitY, 0.03);
   tagMenuButton(exit, menuFlying ? 'exitMenu' : 'exitVR');
   menuButtonsRoot.add(exit);
   menuButtons.push({ mesh: exit, action: exit.userData.menuAction });
 
   const hint = makeTextPlane(
-    'In flight: grab stick · twist = yaw · levers = brake / gear / release',
-    720,
-    40,
+    'A button also launches · grab stick in flight',
+    640,
+    36,
     { font: '18px system-ui,sans-serif', fill: '#4a6870' }
   );
-  hint.scale.set(0.78, 0.045, 1);
-  hint.position.set(0, launchY - 0.2, 0.03);
-  hint.renderOrder = 1002;
+  hint.scale.set(0.7, 0.04, 1);
+  hint.position.set(0, exitY - 0.08, 0.03);
+  hint.layers.set(2);
   menuButtonsRoot.add(hint);
+
+  // Ensure all button meshes are on UI layer
+  menuButtonsRoot.traverse((o) => {
+    o.layers.set(2);
+    o.renderOrder = Math.max(o.renderOrder || 0, 10003);
+  });
 }
 
 function makeButtonMesh(label, active, accent, w = 0.62, h = 0.075) {
@@ -853,12 +872,13 @@ function makeButtonMesh(label, active, accent, w = 0.62, h = 0.075) {
     side: THREE.DoubleSide,
   });
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-  mesh.renderOrder = 1003;
+  mesh.renderOrder = 10003;
+  mesh.layers.set(2);
   mesh.userData.isMenuButton = true;
   mesh.userData.baseScale = 1;
   // Invisible thicker hit slab so trigger is forgiving
   const hit = new THREE.Mesh(
-    new THREE.BoxGeometry(w * 1.08, h * 1.45, 0.1),
+    new THREE.BoxGeometry(w * 1.12, h * 1.55, 0.12),
     new THREE.MeshBasicMaterial({
       visible: false,
       transparent: true,
@@ -868,6 +888,7 @@ function makeButtonMesh(label, active, accent, w = 0.62, h = 0.075) {
   );
   hit.position.z = 0.02;
   hit.name = 'menuHit';
+  hit.layers.set(2);
   mesh.add(hit);
   mesh.userData.hit = hit;
   return mesh;
@@ -937,6 +958,8 @@ export function hideVRMenu() {
 }
 
 const _raycaster = new THREE.Raycaster();
+_raycaster.layers.enable(0);
+_raycaster.layers.enable(2); // VR menu UI layer
 const _ndc = new THREE.Vector2();
 
 function tryMenuSelect(handIndex) {
