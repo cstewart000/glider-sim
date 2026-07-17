@@ -54,14 +54,16 @@ const _m = new THREE.Matrix4();
 const _e = new THREE.Euler();
 const _local = new THREE.Vector3();
 
-/** Stick angle (rad) for full pitch/roll deflection */
-const STICK_ANGLE_FULL = 0.55; // ~31°
+/** Hand offset (m) for full pitch / roll on physical stick */
+const STICK_THROW = 0.1;
 /** Max twist rad for full rudder */
-const STICK_TWIST_MAX = 0.65; // ~37°
+const STICK_TWIST_MAX = 0.7; // ~40°
 /** Soft response curve exponent (1 = linear, >1 gentler near center) */
-const STICK_CURVE = 1.08;
+const STICK_CURVE = 1.12;
 /** Lever travel for full airbrake / gear (m along swing) */
 const LEVER_THROW = 0.14;
+/** Smoothing rate for grabbed stick (1/s) — kills grip tracking jitter */
+const STICK_SMOOTH = 14;
 
 let gearLatched = false;
 let releaseLatched = false;
@@ -394,6 +396,10 @@ function tryGrab(handIndex) {
     // Along-track for levers (cockpit-local hand at grab)
     startHandY: _local.y,
     startHandZ: _local.z,
+    // Smoothed stick axes (filled while driving)
+    smPitch: controls.pitch,
+    smRoll: controls.roll,
+    smYaw: controls.yaw,
   };
 
   // Soft haptic if available
@@ -434,7 +440,7 @@ function driveGrab(handIndex, dt) {
 
   if (g.type === 'stick') {
     controls.xrStickGrab = true;
-    // Hand in cockpit space; measure tilt of pivot→hand vs vertical
+    // Hand in cockpit (parent) space — independent of stick mesh rotation (no feedback loop)
     const pivot = g.root;
     pivot.parent.updateWorldMatrix(true, false);
     _m.copy(pivot.parent.matrixWorld).invert();
@@ -442,30 +448,41 @@ function driveGrab(handIndex, dt) {
     const px = pivot.position.x;
     const py = pivot.position.y;
     const pz = pivot.position.z;
-    // Vector from stick base to hand
-    const dx = _local.x - px;
-    const dy = Math.max(0.06, _local.y - py); // avoid singularity when hand low
-    const dz = _local.z - pz;
-    // Angle-based: left/right of vertical → roll; fore/aft of vertical → pitch
-    // +X right = bank right; +Z aft (pull) = nose up
-    let rollRaw = Math.atan2(dx, dy) / STICK_ANGLE_FULL;
-    let pitchRaw = Math.atan2(dz, dy) / STICK_ANGLE_FULL;
-    rollRaw = curveAxis(THREE.MathUtils.clamp(rollRaw, -1.35, 1.35));
-    pitchRaw = curveAxis(THREE.MathUtils.clamp(pitchRaw, -1.35, 1.35));
-    controls.roll = THREE.MathUtils.clamp(rollRaw, -1, 1);
-    controls.pitch = THREE.MathUtils.clamp(pitchRaw, -1, 1);
+    // Offset from upright grip rest (base + up along shaft)
+    const gripLen = 0.4;
+    const ox = _local.x - px;
+    const oy = _local.y - (py + gripLen);
+    const oz = _local.z - pz;
+    // Displacement mapping (stable): lateral → roll, fore/aft → pitch
+    // +X (hand right) → bank right; +Z (pull aft) → nose up
+    let rollRaw = THREE.MathUtils.clamp(ox / STICK_THROW, -1.4, 1.4);
+    let pitchRaw = THREE.MathUtils.clamp(oz / STICK_THROW, -1.4, 1.4);
+    // Slight vertical blend (don't dominate — was a source of pitch glitch)
+    pitchRaw += THREE.MathUtils.clamp(-oy / (STICK_THROW * 2.2), -0.25, 0.25);
+    rollRaw = curveAxis(rollRaw);
+    pitchRaw = curveAxis(pitchRaw);
 
-    // Twist grip for yaw
+    // Twist → yaw (wide deadzone so it doesn't jitter into roll/pitch)
     grip.getWorldQuaternion(_q);
     const twist = extractTwistAroundY(_q);
     let yawRaw = (twist - activeGrab.twist0) / STICK_TWIST_MAX;
+    if (Math.abs(yawRaw) < 0.12) yawRaw = 0;
     yawRaw = curveAxis(THREE.MathUtils.clamp(yawRaw, -1.35, 1.35));
-    controls.yaw = THREE.MathUtils.clamp(yawRaw, -1, 1);
 
-    // Drive stick mesh 1:1 with hand deflection (visual)
-    pivot.rotation.z = -controls.roll * 0.5;
-    pivot.rotation.x = controls.pitch * 0.55;
-    pivot.rotation.y = -controls.yaw * 0.35;
+    // Low-pass filter — kills tracking noise that made ailerons feel wrong
+    const a = 1 - Math.exp(-STICK_SMOOTH * Math.max(0.001, dt));
+    activeGrab.smRoll += (rollRaw - activeGrab.smRoll) * a;
+    activeGrab.smPitch += (pitchRaw - activeGrab.smPitch) * a;
+    activeGrab.smYaw += (yawRaw - activeGrab.smYaw) * a;
+
+    controls.roll = THREE.MathUtils.clamp(activeGrab.smRoll, -1, 1);
+    controls.pitch = THREE.MathUtils.clamp(activeGrab.smPitch, -1, 1);
+    controls.yaw = THREE.MathUtils.clamp(activeGrab.smYaw, -1, 1);
+
+    // Stick visual follows smoothed axes (not raw grip)
+    pivot.rotation.z = -controls.roll * 0.48;
+    pivot.rotation.x = controls.pitch * 0.52;
+    pivot.rotation.y = -controls.yaw * 0.3;
   } else if (g.type === 'brake') {
     // Continuous 0…1 — relative slide from grab, both directions
     controls.xrBrakeGrab = true;
@@ -569,7 +586,9 @@ function applyThumbstickFallback(session) {
 
     if (!menuVisible) {
       if (hand === 'right' || hand === '') {
-        pitch += -sy;
+        // Right thumbstick pitch: push up (sy < 0 on Quest) = nose up
+        // (inverted from earlier mapping per pilot feedback)
+        pitch += sy;
         roll += sx;
       }
       if (hand === 'left') {
