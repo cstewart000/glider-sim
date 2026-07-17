@@ -37,7 +37,7 @@ import {
 } from './scenarioVisuals.js';
 import { initCockpitOverlay, updateCockpitOverlay } from './cockpitOverlay.js';
 import {
-  initXR, updateXRRig, updateXRControls, isXRPresenting,
+  initXR, updateXRRig, updateXRControls, isXRPresenting, isVRMenuVisible,
   setXRFlying, setXRMenuScenarios, setXRGlider, showVRMenu, hideVRMenu,
 } from './xr.js';
 import { loadPrefs, savePrefs, getVolume } from './prefs.js';
@@ -370,14 +370,19 @@ function updateCamera(dt, renderPos, renderQuat) {
   // —— WebXR: rig follows glider; headset provides look ——
   if (isXRPresenting()) {
     setCockpitOverlayVisible(false);
-    const external = physics.rolling || physics.wingStrike || cameraMode !== 0;
-    if (external) {
+    // Title / pause menu: hide glider so cockpit doesn't block the VR UI
+    if (isVRMenuVisible() || !running) {
       setCockpitVisible(gliderMesh, false);
-      gliderMesh.visible = true;
+      gliderMesh.visible = false;
     } else {
-      // 3D cockpit tub in VR FP
-      setCockpitVisible(gliderMesh, true);
-      gliderMesh.visible = true;
+      const external = physics.rolling || physics.wingStrike || cameraMode !== 0;
+      if (external) {
+        setCockpitVisible(gliderMesh, false);
+        gliderMesh.visible = true;
+      } else {
+        setCockpitVisible(gliderMesh, true);
+        gliderMesh.visible = true;
+      }
     }
     cockpitEyeFromPose(pos, quat, camPos);
     updateXRRig(camPos, quat);
