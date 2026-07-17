@@ -42,6 +42,15 @@ import {
 } from './xr.js';
 import { loadPrefs, savePrefs, getVolume } from './prefs.js';
 
+// Injected by Vite at build/dev time — shows on title so Quest cache is obvious
+const BUILD_ID =
+  typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev';
+{
+  const el = document.getElementById('build-id');
+  if (el) el.textContent = `build ${BUILD_ID}`;
+  console.info('[glider-sim] build', BUILD_ID);
+}
+
 // —— Renderer tuned for ~50fps on integrated GPUs ——
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({

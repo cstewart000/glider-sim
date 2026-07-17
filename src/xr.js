@@ -739,6 +739,8 @@ function buildVRMenu() {
   frame.layers.set(2);
   menuGroup.add(frame);
 
+  const buildLabel =
+    typeof __BUILD_ID__ !== 'undefined' ? String(__BUILD_ID__).slice(0, 12) : 'dev';
   const title = makeTextPlane('LOW POLY GLIDER', 512, 56, {
     font: 'bold 34px system-ui,sans-serif',
     fill: '#1a4a58',
@@ -748,6 +750,15 @@ function buildVRMenu() {
   title.renderOrder = 10002;
   title.layers.set(2);
   menuGroup.add(title);
+  const buildPlane = makeTextPlane(`build ${buildLabel}`, 512, 32, {
+    font: '18px system-ui,sans-serif',
+    fill: '#6a8090',
+  });
+  buildPlane.scale.set(0.5, 0.04, 1);
+  buildPlane.position.set(0, 0.38, 0.02);
+  buildPlane.renderOrder = 10002;
+  buildPlane.layers.set(2);
+  menuGroup.add(buildPlane);
 
   menuButtonsRoot = new THREE.Group();
   menuButtonsRoot.name = 'xrMenuButtons';

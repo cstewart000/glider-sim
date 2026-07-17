@@ -908,6 +908,14 @@ html.xr-active #vr-button {
   font-size: 13px;
   margin: 0;
 }
+.build-id {
+  margin: 6px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #8a9aa8;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
 /* legacy list (if any remain) */
 .controls {
   list-style: none;
