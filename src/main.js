@@ -36,7 +36,10 @@ import {
   initScenarioVisuals, setScenarioVisualMode, updateScenarioVisuals,
 } from './scenarioVisuals.js';
 import { initCockpitOverlay, updateCockpitOverlay } from './cockpitOverlay.js';
-import { initXR, updateXRRig, updateXRControls, isXRPresenting } from './xr.js';
+import {
+  initXR, updateXRRig, updateXRControls, isXRPresenting,
+  setXRFlying, setXRMenuScenarios, setXRGlider, showVRMenu, hideVRMenu,
+} from './xr.js';
 import { loadPrefs, savePrefs, getVolume } from './prefs.js';
 
 // —— Renderer tuned for ~50fps on integrated GPUs ——
@@ -499,6 +502,8 @@ async function startFlight() {
   showHUD();
   showCoachTip(coachForScenario(sc.id), 12);
   savePrefs({ scenarioId: sc.id });
+  setXRFlying(true);
+  hideVRMenu();
 }
 
 function endFlight() {
@@ -529,6 +534,8 @@ function returnToScenarioMenu() {
   gliderMesh.visible = true;
   setCockpitOverlayVisible(false);
   showTitle();
+  setXRFlying(false);
+  if (isXRPresenting()) showVRMenu();
   const sc = getActiveScenario();
   const sp = spawnForActiveScenario();
   applyScenarioWorld(sc.id, sp.position);
@@ -539,19 +546,55 @@ function returnToScenarioMenu() {
 
 initInput();
 initCockpitOverlay();
-// WebXR — Enter VR button (Quest Browser needs HTTPS or adb reverse to localhost)
+
+function previewScenario(id) {
+  setActiveScenario(id);
+  savePrefs({ scenarioId: id });
+  setXRMenuScenarios(
+    SCENARIO_LIST.map((s) => ({ id: s.id, name: s.name })),
+    id
+  );
+  const sc = getActiveScenario();
+  const sp = spawnForActiveScenario();
+  applyScenarioWorld(sc.id, sp.position);
+  physics.reset(sp);
+  gliderMesh.position.copy(physics.position);
+  gliderMesh.quaternion.copy(physics.quaternion);
+  if (!isXRPresenting()) {
+    camera.position.copy(sp.position).add(new THREE.Vector3(40, 80, 120));
+    camera.lookAt(sp.position);
+  }
+}
+
+// WebXR — grab cockpit stick/levers + world-space menu
 initXR({
   renderer,
   scene,
   camera,
   buttonHost: document.getElementById('vr-button-host') || document.body,
+  glider: gliderMesh,
+  scenarios: SCENARIO_LIST.map((s) => ({ id: s.id, name: s.name })),
+  activeScenarioId: getActiveScenario().id,
+  onSelectScenario: (id) => previewScenario(id),
+  onLaunch: () => {
+    startFlight();
+  },
+  onExitToMenu: () => {
+    returnToScenarioMenu();
+  },
 });
+setXRGlider(gliderMesh);
+
 // Restore prefs (scenario + options)
 {
   const prefs = loadPrefs();
   if (prefs.scenarioId) setActiveScenario(prefs.scenarioId);
   flightAudio.setMasterVolume(getVolume());
   setInvertPitch(!!prefs.invertPitch);
+  setXRMenuScenarios(
+    SCENARIO_LIST.map((s) => ({ id: s.id, name: s.name })),
+    getActiveScenario().id
+  );
   // Wire options UI
   const volEl = document.getElementById('pref-volume');
   const unitsEl = document.getElementById('pref-units');
@@ -579,17 +622,7 @@ initXR({
   }
 }
 setupScenarioMenu(SCENARIO_LIST, getActiveScenario().id, (id) => {
-  setActiveScenario(id);
-  savePrefs({ scenarioId: id });
-  // Preview world on the title screen when picking a scenario
-  const sc = getActiveScenario();
-  const sp = spawnForActiveScenario();
-  applyScenarioWorld(sc.id, sp.position);
-  physics.reset(sp);
-  gliderMesh.position.copy(physics.position);
-  gliderMesh.quaternion.copy(physics.quaternion);
-  camera.position.copy(sp.position).add(new THREE.Vector3(40, 80, 120));
-  camera.lookAt(sp.position);
+  previewScenario(id);
 });
 // Initial world matches active scenario (prefs-aware)
 {
@@ -627,8 +660,8 @@ function tick(_time, frame) {
   const frameDt = Math.min(clock.getDelta(), 0.08);
 
   updateInput();
-  // XR sticks/buttons override axes when deflected (after keyboard)
-  updateXRControls();
+  // XR grab stick/levers + thumbstick fallback (after keyboard)
+  updateXRControls(frameDt);
 
   // M: return to scenario menu (in flight, after landing, or during result hold)
   if (controls.menu && (running || ended)) {

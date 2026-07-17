@@ -26,6 +26,11 @@ export const controls = {
   /** Return to scenario menu (edge) */
   menu: false,
   gearToggle: false,
+  /** XR physical grab flags — skip smoothed stick/lever visuals */
+  xrStickGrab: false,
+  xrBrakeGrab: false,
+  xrGearGrab: false,
+  xrReleaseGrab: false,
   /**
    * Cockpit look pad 1–9 (sticky). Layout:
    *  7 left-up   8 up    9 right-up

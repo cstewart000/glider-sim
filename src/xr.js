@@ -1,14 +1,13 @@
 /**
- * WebXR session + Quest-friendly controller mapping for cockpit flight.
+ * WebXR session + Quest cockpit interaction.
  *
- * Controls (typical Quest / OpenXR):
- *  Right stick Y  — pitch (pull back = nose up)
- *  Right stick X  — roll
- *  Left stick X   — rudder
- *  Right trigger  — airbrakes
- *  A / X          — toggle gear
- *  B / Y          — release cable/tow or restart (edge)
- *  Left trigger   — camera cycle (edge)
+ * Primary flight: grab the stick (squeeze/trigger near grip)
+ *   - Hand offset → proportional pitch / roll
+ *   - Twist controller around stick shaft → yaw
+ * Levers: airbrake, gear, tow/cable release (grab + move)
+ * Fallback: thumbsticks when not grabbing
+ *
+ * World-space VR menu for scenario pick + launch when not flying.
  */
 
 import * as THREE from 'three';
@@ -21,15 +20,71 @@ let renderer = null;
 let xrRig = null;
 let camera = null;
 let scene = null;
-let controllersReady = false;
+/** @type {THREE.Object3D|null} */
+let gliderRef = null;
 
-const _euler = new THREE.Euler();
+/** Controllers + grips */
+const hands = [
+  {
+    ctrl: null,
+    grip: null,
+    ray: null,
+    highlight: null,
+    squeezeHeld: false,
+    selectHeld: false,
+    grabbing: null,
+  },
+  {
+    ctrl: null,
+    grip: null,
+    ray: null,
+    highlight: null,
+    squeezeHeld: false,
+    selectHeld: false,
+    grabbing: null,
+  },
+];
+
+// Grab state shared for stick twist baseline
+const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _m = new THREE.Matrix4();
+const _e = new THREE.Euler();
+const _local = new THREE.Vector3();
 
-// Edge-trigger latches for XR buttons
+/** Stick throw for full deflection (m) — larger = less sensitive */
+const STICK_THROW = 0.11;
+/** Max twist rad for full rudder */
+const STICK_TWIST_MAX = 0.7; // ~40°
+/** Soft response curve exponent (1 = linear, >1 gentler near center) */
+const STICK_CURVE = 1.15;
+
 let gearLatched = false;
 let releaseLatched = false;
 let camLatched = false;
+let menuBtnLatched = false;
+
+/** @type {null | { type: string, hand: number, pivotWorld: THREE.Vector3, grabLocal: THREE.Vector3, twist0: number, startGear: number, startBrake: number }} */
+let activeGrab = null;
+
+// —— VR menu ——
+let menuGroup = null;
+let menuVisible = false;
+/** @type {{ mesh: THREE.Mesh, action: string, id?: string }[]} */
+let menuButtons = [];
+/** @type {((id: string) => void) | null} */
+let onMenuSelect = null;
+/** @type {(() => void) | null} */
+let onMenuLaunch = null;
+/** @type {(() => void) | null} */
+let onMenuExit = null;
+/** @type {{ id: string, name: string }[]} */
+let menuScenarios = [];
+let menuActiveId = '';
+let menuFlying = false;
+let selectLatched = [false, false];
 
 /**
  * @param {object} opts
@@ -37,36 +92,94 @@ let camLatched = false;
  * @param {THREE.Scene} opts.scene
  * @param {THREE.PerspectiveCamera} opts.camera
  * @param {HTMLElement} [opts.buttonHost]
+ * @param {THREE.Object3D} [opts.glider]
+ * @param {{ id: string, name: string }[]} [opts.scenarios]
+ * @param {string} [opts.activeScenarioId]
+ * @param {(id: string) => void} [opts.onSelectScenario]
+ * @param {() => void} [opts.onLaunch]
+ * @param {() => void} [opts.onExitToMenu]
  */
-export function initXR({ renderer: r, scene: s, camera: cam, buttonHost }) {
+export function initXR({
+  renderer: r,
+  scene: s,
+  camera: cam,
+  buttonHost,
+  glider,
+  scenarios = [],
+  activeScenarioId = '',
+  onSelectScenario,
+  onLaunch,
+  onExitToMenu,
+}) {
   renderer = r;
   scene = s;
   camera = cam;
+  gliderRef = glider || null;
+  menuScenarios = scenarios;
+  menuActiveId = activeScenarioId;
+  onMenuSelect = onSelectScenario || null;
+  onMenuLaunch = onLaunch || null;
+  onMenuExit = onExitToMenu || null;
 
   renderer.xr.enabled = true;
-  // Seated cockpit — local space, we move the rig each frame
   try {
     renderer.xr.setReferenceSpaceType('local');
   } catch {
     /* older three */
   }
 
-  // Rig: world pose of the cockpit; headset is relative to this
   xrRig = new THREE.Group();
   xrRig.name = 'xrRig';
   xrRig.visible = false;
   scene.add(xrRig);
 
-  // Simple controller rays (lightweight, no GLTF)
   for (let i = 0; i < 2; i++) {
     const ctrl = renderer.xr.getController(i);
-    ctrl.add(makePointerMesh());
+    const ray = makePointerMesh();
+    ctrl.add(ray);
     xrRig.add(ctrl);
 
     const grip = renderer.xr.getControllerGrip(i);
     grip.add(makeGripMesh());
+    // Hover highlight sphere on grip
+    const hl = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 10, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0x60d0e8,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+    );
+    grip.add(hl);
     xrRig.add(grip);
+
+    hands[i].ctrl = ctrl;
+    hands[i].grip = grip;
+    hands[i].ray = ray;
+    hands[i].highlight = hl;
+
+    // Squeeze / trigger grab (hold either)
+    ctrl.addEventListener('squeezestart', () => {
+      hands[i].squeezeHeld = true;
+      if (!menuVisible) tryGrab(i);
+    });
+    ctrl.addEventListener('squeezeend', () => {
+      hands[i].squeezeHeld = false;
+      if (!hands[i].selectHeld) releaseGrab(i);
+    });
+    ctrl.addEventListener('selectstart', () => {
+      hands[i].selectHeld = true;
+      if (menuVisible) tryMenuSelect(i);
+      else tryGrab(i);
+    });
+    ctrl.addEventListener('selectend', () => {
+      hands[i].selectHeld = false;
+      if (!hands[i].squeezeHeld) releaseGrab(i);
+    });
   }
+
+  buildVRMenu();
 
   const btn = createVRButton(renderer);
   if (buttonHost) buttonHost.appendChild(btn);
@@ -75,69 +188,78 @@ export function initXR({ renderer: r, scene: s, camera: cam, buttonHost }) {
   renderer.xr.addEventListener('sessionstart', () => {
     xrPresenting = true;
     xrRig.visible = true;
-    // Parent camera under rig so WebXR local pose is cockpit-relative
-    if (camera.parent !== xrRig) {
-      xrRig.add(camera);
-    }
-    // Headset pose is applied on camera; keep local identity as base
+    if (camera.parent !== xrRig) xrRig.add(camera);
     camera.position.set(0, 0, 0);
     camera.quaternion.identity();
-    camera.near = 0.05;
+    camera.near = 0.04;
     camera.far = 3500;
     camera.updateProjectionMatrix();
     document.documentElement.classList.add('xr-active');
+    // Show menu if not in flight
+    setVRMenuVisible(!menuFlying);
   });
 
   renderer.xr.addEventListener('sessionend', () => {
     xrPresenting = false;
     xrRig.visible = false;
-    // Restore camera to scene root for desktop
-    if (camera.parent === xrRig) {
-      scene.add(camera);
-    }
+    if (camera.parent === xrRig) scene.add(camera);
     camera.position.set(0, 0, 0);
     camera.quaternion.identity();
     camera.rotation.set(0, 0, 0);
     document.documentElement.classList.remove('xr-active');
-    // Clear XR-driven axes so keyboard takes over cleanly
     clearXRAxes();
+    releaseGrab(0);
+    releaseGrab(1);
+    setVRMenuVisible(false);
   });
 
-  controllersReady = true;
   return { xrRig, button: btn };
+}
+
+/** Keep glider reference up to date (after mesh recreate). */
+export function setXRGlider(glider) {
+  gliderRef = glider;
+}
+
+export function setXRMenuScenarios(list, activeId) {
+  menuScenarios = list || [];
+  menuActiveId = activeId || '';
+  rebuildMenuButtons();
+}
+
+export function setXRFlying(flying) {
+  menuFlying = !!flying;
+  if (xrPresenting) setVRMenuVisible(!flying);
 }
 
 function makePointerMesh() {
   const g = new THREE.Group();
+  g.name = 'xrRay';
   const line = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.003, 0.003, 0.35, 4),
-    new THREE.MeshBasicMaterial({ color: 0x88c8d8, transparent: true, opacity: 0.55 })
+    new THREE.CylinderGeometry(0.0025, 0.0025, 0.55, 4),
+    new THREE.MeshBasicMaterial({ color: 0x88c8d8, transparent: true, opacity: 0.45 })
   );
   line.rotation.x = -Math.PI / 2;
-  line.position.z = -0.18;
+  line.position.z = -0.28;
   g.add(line);
   const tip = new THREE.Mesh(
-    new THREE.SphereGeometry(0.012, 6, 6),
+    new THREE.SphereGeometry(0.01, 6, 6),
     new THREE.MeshBasicMaterial({ color: 0xc8eef8 })
   );
-  tip.position.z = -0.36;
+  tip.position.z = -0.55;
   g.add(tip);
   return g;
 }
 
 function makeGripMesh() {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.04, 0.04, 0.08),
-    new THREE.MeshBasicMaterial({ color: 0xb0b0b8, transparent: true, opacity: 0.7 })
+  return new THREE.Mesh(
+    new THREE.BoxGeometry(0.035, 0.035, 0.07),
+    new THREE.MeshBasicMaterial({ color: 0xb0b0b8, transparent: true, opacity: 0.65 })
   );
-  return mesh;
 }
 
 /**
  * Place XR origin at cockpit eye, oriented with the glider.
- * Headset look is layered on top by WebXR.
- * @param {THREE.Vector3} eyePos
- * @param {THREE.Quaternion} gliderQuat
  */
 export function updateXRRig(eyePos, gliderQuat) {
   if (!xrPresenting || !xrRig) return;
@@ -146,14 +268,257 @@ export function updateXRRig(eyePos, gliderQuat) {
 }
 
 /**
- * Read XR gamepads and write into shared `controls` (after keyboard update).
- * Keyboard is baseline; XR sticks/buttons override axes when deflected.
+ * Main XR input + grab update (call after keyboard updateInput).
+ * @param {number} [dt]
  */
-export function updateXRControls() {
+export function updateXRControls(dt = 0.016) {
   if (!xrPresenting || !renderer) return;
   const session = renderer.xr.getSession();
   if (!session) return;
 
+  // Reset grab flags each frame (re-set while holding)
+  controls.xrStickGrab = false;
+  controls.xrBrakeGrab = false;
+  controls.xrGearGrab = false;
+  controls.xrReleaseGrab = false;
+
+  // Hover highlights + continuous grab drive
+  for (let i = 0; i < 2; i++) {
+    updateHandHover(i);
+    if (hands[i].grabbing) driveGrab(i, dt);
+  }
+
+  // Fallback thumbsticks when not grabbing stick
+  if (!controls.xrStickGrab) {
+    applyThumbstickFallback(session);
+  } else {
+    // Still allow camera / menu buttons from gamepads
+    applyButtonEdges(session);
+  }
+
+  // Menu ray hover tint
+  if (menuVisible) updateMenuHover();
+}
+
+function getGrabbables() {
+  const cockpit =
+    gliderRef?.userData?.cockpit || gliderRef?.getObjectByName?.('cockpitInterior');
+  return cockpit?.userData?.grabbables || [];
+}
+
+function gripWorldPos(handIndex, out = _v) {
+  const grip = hands[handIndex].grip;
+  if (!grip) return out.set(0, 0, 0);
+  grip.getWorldPosition(out);
+  return out;
+}
+
+function findNearestGrabbable(handIndex) {
+  const gp = gripWorldPos(handIndex, _v);
+  let best = null;
+  let bestD = Infinity;
+  for (const g of getGrabbables()) {
+    if (!g.grab) continue;
+    g.grab.getWorldPosition(_v2);
+    const d = gp.distanceTo(_v2);
+    if (d < g.radius && d < bestD) {
+      bestD = d;
+      best = g;
+    }
+  }
+  return best;
+}
+
+function updateHandHover(handIndex) {
+  const h = hands[handIndex];
+  if (!h.highlight) return;
+  if (h.grabbing) {
+    h.highlight.material.opacity = 0.55;
+    h.highlight.material.color.setHex(0x50e0a0);
+    return;
+  }
+  const near = findNearestGrabbable(handIndex);
+  if (near) {
+    h.highlight.material.opacity = 0.4;
+    h.highlight.material.color.setHex(0x60d0e8);
+  } else {
+    h.highlight.material.opacity = 0.0;
+  }
+}
+
+function tryGrab(handIndex) {
+  if (hands[handIndex].grabbing) return;
+  // Menu open: ray UI only, no cockpit grabs
+  if (menuVisible) return;
+
+  const g = findNearestGrabbable(handIndex);
+  if (!g) return;
+
+  hands[handIndex].grabbing = g;
+  const grip = hands[handIndex].grip;
+  grip.getWorldPosition(_v);
+  g.root.getWorldPosition(_v2);
+
+  // Local offset of hand relative to root at grab start
+  g.root.worldToLocal(_local.copy(_v));
+
+  let twist0 = 0;
+  if (grip) {
+    grip.getWorldQuaternion(_q);
+    twist0 = extractTwistAroundY(_q);
+  }
+
+  activeGrab = {
+    type: g.type,
+    hand: handIndex,
+    pivotWorld: _v2.clone(),
+    grabLocal: _local.clone(),
+    twist0,
+    startGear: controls.gear,
+    startBrake: controls.brakes,
+    startReleaseZ: g.root.position.z,
+  };
+
+  // Soft haptic if available
+  pulseHaptic(handIndex, 0.3, 20);
+}
+
+function releaseGrab(handIndex) {
+  const g = hands[handIndex].grabbing;
+  if (!g) return;
+  hands[handIndex].grabbing = null;
+  if (activeGrab && activeGrab.hand === handIndex) {
+    // Snap gear to up/down on release
+    if (g.type === 'gear') {
+      controls.gear = controls.gear > 0.5 ? 1 : 0;
+      controls.gearToggle = true;
+    }
+    activeGrab = null;
+  }
+  controls.xrStickGrab = false;
+  controls.xrBrakeGrab = false;
+  controls.xrGearGrab = false;
+  controls.xrReleaseGrab = false;
+}
+
+/**
+ * Map hand pose → flight controls while holding a grabbable.
+ */
+function driveGrab(handIndex, dt) {
+  const g = hands[handIndex].grabbing;
+  if (!g || !activeGrab || activeGrab.hand !== handIndex) return;
+  const grip = hands[handIndex].grip;
+  if (!grip) return;
+
+  grip.getWorldPosition(_v);
+
+  if (g.type === 'stick') {
+    controls.xrStickGrab = true;
+    // Hand position in stick root parent (cockpit) for deflection from pivot
+    const pivot = g.root;
+    pivot.parent.updateWorldMatrix(true, false);
+    _m.copy(pivot.parent.matrixWorld).invert();
+    _local.copy(_v).applyMatrix4(_m);
+    // Stick pivot local position
+    const px = pivot.position.x;
+    const py = pivot.position.y;
+    const pz = pivot.position.z;
+    // Offset from pivot toward grip (ideal grip ~0.42 above pivot)
+    const dx = _local.x - px;
+    const dy = _local.y - py;
+    const dz = _local.z - pz;
+    // Pitch: pull aft (+Z body) / push forward (−Z) — proportional
+    // Roll: hand left/right (X)
+    let rollRaw = THREE.MathUtils.clamp(dx / STICK_THROW, -1.2, 1.2);
+    let pitchRaw = THREE.MathUtils.clamp(dz / STICK_THROW, -1.2, 1.2);
+    // Also blend vertical: lifting hand a bit = slight nose up
+    pitchRaw += THREE.MathUtils.clamp((dy - 0.38) / STICK_THROW, -0.35, 0.35);
+    rollRaw = curveAxis(rollRaw);
+    pitchRaw = curveAxis(pitchRaw);
+    controls.roll = THREE.MathUtils.clamp(rollRaw, -1, 1);
+    controls.pitch = THREE.MathUtils.clamp(pitchRaw, -1, 1);
+
+    // Twist grip for yaw (rotation around world-up of stick / body Y)
+    grip.getWorldQuaternion(_q);
+    const twist = extractTwistAroundY(_q);
+    let yawRaw = (twist - activeGrab.twist0) / STICK_TWIST_MAX;
+    yawRaw = curveAxis(yawRaw);
+    controls.yaw = THREE.MathUtils.clamp(yawRaw, -1, 1);
+
+    // Drive stick mesh 1:1 with hand deflection (visual)
+    pivot.rotation.z = -controls.roll * 0.45;
+    pivot.rotation.x = controls.pitch * 0.5;
+    pivot.rotation.y = -controls.yaw * 0.35;
+  } else if (g.type === 'brake') {
+    controls.xrBrakeGrab = true;
+    // Map hand height / fore-aft relative to lever mount → 0..1 brakes
+    g.root.parent.updateWorldMatrix(true, false);
+    _m.copy(g.root.parent.matrixWorld).invert();
+    _local.copy(_v).applyMatrix4(_m);
+    // Lever at rest rotation.x ≈ -0.15; full ≈ -1.15
+    // Hand y relative to lever base: lower hand → more brakes
+    const baseY = g.root.position.y;
+    const baseZ = g.root.position.z;
+    const dy = _local.y - baseY;
+    const dz = _local.z - baseZ;
+    // Forward (−z) and down (−y) increase brakes
+    let b = (-dy * 2.2 + -dz * 1.5 + 0.35);
+    b = THREE.MathUtils.clamp(b, 0, 1);
+    controls.brakes = b;
+    g.root.rotation.x = -0.15 - b * 1.0;
+  } else if (g.type === 'gear') {
+    controls.xrGearGrab = true;
+    g.root.parent.updateWorldMatrix(true, false);
+    _m.copy(g.root.parent.matrixWorld).invert();
+    _local.copy(_v).applyMatrix4(_m);
+    const baseY = g.root.position.y;
+    // Pull aft/up → gear up (0); push down/forward → gear down (1)
+    const dy = _local.y - baseY;
+    let gear = THREE.MathUtils.clamp(0.55 + dy * 3.5, 0, 1);
+    controls.gear = gear;
+    g.root.rotation.x = -0.15 - (1 - gear) * 1.05;
+  } else if (g.type === 'release') {
+    controls.xrReleaseGrab = true;
+    g.root.parent.updateWorldMatrix(true, false);
+    _m.copy(g.root.parent.matrixWorld).invert();
+    _local.copy(_v).applyMatrix4(_m);
+    // Pull toward pilot (+z) to release
+    const pull = _local.z - activeGrab.startReleaseZ;
+    g.root.position.z = THREE.MathUtils.clamp(
+      activeGrab.startReleaseZ + Math.max(0, pull),
+      -0.35,
+      -0.12
+    );
+    if (pull > 0.1 && !releaseLatched) {
+      controls.restart = true; // maps to releaseLaunch / restart in main
+      releaseLatched = true;
+      pulseHaptic(handIndex, 0.8, 40);
+    }
+    if (pull < 0.05) releaseLatched = false;
+  }
+}
+
+function curveAxis(v) {
+  const s = Math.sign(v);
+  const a = Math.min(1, Math.abs(v));
+  // Deadzone + power curve for fine control near center
+  const dead = 0.06;
+  if (a < dead) return 0;
+  const t = (a - dead) / (1 - dead);
+  return s * Math.pow(t, STICK_CURVE);
+}
+
+/** Approximate twist about world-up from a quaternion. */
+function extractTwistAroundY(q) {
+  // Project controller forward onto XZ, measure yaw
+  _v2.set(0, 0, -1).applyQuaternion(q);
+  _v2.y = 0;
+  if (_v2.lengthSq() < 1e-6) return 0;
+  _v2.normalize();
+  return Math.atan2(_v2.x, -_v2.z);
+}
+
+function applyThumbstickFallback(session) {
   let pitch = 0;
   let roll = 0;
   let yaw = 0;
@@ -161,13 +526,12 @@ export function updateXRControls() {
   let gearEdge = false;
   let releaseEdge = false;
   let camEdge = false;
+  let menuEdge = false;
 
   for (const src of session.inputSources) {
     const gp = src.gamepad;
     if (!gp) continue;
-    const hand = src.handedness; // 'left' | 'right' | ''
-
-    // Axes: Quest often uses [0,1] touchpad and [2,3] thumbstick
+    const hand = src.handedness;
     const ax = gp.axes || [];
     let sx = 0;
     let sy = 0;
@@ -178,73 +542,113 @@ export function updateXRControls() {
       sx = ax[0] || 0;
       sy = ax[1] || 0;
     }
-    // Deadzone
-    if (Math.abs(sx) < 0.12) sx = 0;
-    if (Math.abs(sy) < 0.12) sy = 0;
+    if (Math.abs(sx) < 0.1) sx = 0;
+    if (Math.abs(sy) < 0.1) sy = 0;
+    // Gentle curve on sticks too
+    sx = curveAxis(sx * 1.05);
+    sy = curveAxis(sy * 1.05);
 
     if (hand === 'right' || hand === '') {
-      // Aircraft stick: pull back (sy < 0 on many pads) = nose up
-      // Quest: thumbstick up is often negative Y
       pitch += -sy;
       roll += sx;
     }
     if (hand === 'left') {
       yaw += sx;
-      // left stick Y unused (or could be trim later)
     }
 
-    // Buttons: 0 trigger, 1 squeeze, 4 A/X, 5 B/Y (common layout)
     const btns = gp.buttons || [];
     const trigger = btns[0]?.value ?? (btns[0]?.pressed ? 1 : 0);
-    const squeeze = btns[1]?.value ?? (btns[1]?.pressed ? 1 : 0);
+    // Only use trigger as brakes when not grabbing something with this hand
+    const handIdx = hand === 'left' ? 0 : 1;
+    if (!hands[handIdx]?.grabbing) {
+      if (hand === 'right' || hand === '') {
+        brakes = Math.max(brakes, trigger);
+      }
+    }
     if (hand === 'right' || hand === '') {
-      brakes = Math.max(brakes, trigger, squeeze);
       if (btns[4]?.pressed) gearEdge = true;
       if (btns[5]?.pressed) releaseEdge = true;
     }
     if (hand === 'left') {
-      if (trigger > 0.8) camEdge = true;
+      if (trigger > 0.85 && !hands[0]?.grabbing) camEdge = true;
       if (btns[4]?.pressed) gearEdge = true;
-      if (btns[5]?.pressed) releaseEdge = true;
-      // left squeeze as brakes alternative
-      brakes = Math.max(brakes, squeeze);
+      if (btns[5]?.pressed) menuEdge = true; // Y often menu
     }
   }
 
-  // Clamp
-  pitch = THREE.MathUtils.clamp(pitch, -1, 1);
-  roll = THREE.MathUtils.clamp(roll, -1, 1);
-  yaw = THREE.MathUtils.clamp(yaw, -1, 1);
-  brakes = THREE.MathUtils.clamp(brakes, 0, 1);
+  if (Math.abs(pitch) > 0.02) controls.pitch = THREE.MathUtils.clamp(pitch, -1, 1);
+  if (Math.abs(roll) > 0.02) controls.roll = THREE.MathUtils.clamp(roll, -1, 1);
+  if (Math.abs(yaw) > 0.02) controls.yaw = THREE.MathUtils.clamp(yaw, -1, 1);
+  if (brakes > 0.05 && !controls.xrBrakeGrab) {
+    controls.brakes = THREE.MathUtils.clamp(brakes, 0, 1);
+  }
 
-  // Override keyboard axes when XR stick deflected; keep keys if stick neutral
-  if (Math.abs(pitch) > 0.02) controls.pitch = pitch;
-  if (Math.abs(roll) > 0.02) controls.roll = roll;
-  if (Math.abs(yaw) > 0.02) controls.yaw = yaw;
-  if (brakes > 0.05) controls.brakes = brakes;
+  applyEdges(gearEdge, releaseEdge, camEdge, menuEdge);
+}
 
-  // Gear edge
-  if (gearEdge && !gearLatched) {
+function applyButtonEdges(session) {
+  let gearEdge = false;
+  let releaseEdge = false;
+  let camEdge = false;
+  let menuEdge = false;
+  for (const src of session.inputSources) {
+    const gp = src.gamepad;
+    if (!gp) continue;
+    const hand = src.handedness;
+    const btns = gp.buttons || [];
+    if (btns[4]?.pressed) gearEdge = true;
+    if (btns[5]?.pressed) {
+      if (hand === 'left') menuEdge = true;
+      else releaseEdge = true;
+    }
+  }
+  applyEdges(gearEdge, releaseEdge, camEdge, menuEdge);
+}
+
+function applyEdges(gearEdge, releaseEdge, camEdge, menuEdge) {
+  if (gearEdge && !gearLatched && !controls.xrGearGrab) {
     controls.gear = controls.gear > 0.5 ? 0 : 1;
     controls.gearToggle = true;
     gearLatched = true;
-  } else if (!gearEdge) {
-    gearLatched = false;
-  }
+  } else if (!gearEdge) gearLatched = false;
 
-  // Release / restart edge → maps to controls.restart (one frame)
-  if (releaseEdge && !releaseLatched) {
+  if (releaseEdge && !releaseLatched && !controls.xrReleaseGrab) {
     controls.restart = true;
     releaseLatched = true;
-  } else {
-    if (!releaseEdge) releaseLatched = false;
+  } else if (!releaseEdge && !controls.xrReleaseGrab) {
+    releaseLatched = false;
   }
 
   if (camEdge && !camLatched) {
     controls.cameraToggle = true;
     camLatched = true;
-  } else {
-    if (!camEdge) camLatched = false;
+  } else if (!camEdge) camLatched = false;
+
+  if (menuEdge && !menuBtnLatched) {
+    controls.menu = true;
+    menuBtnLatched = true;
+    // Toggle VR menu while flying
+    if (menuFlying && xrPresenting) {
+      setVRMenuVisible(!menuVisible);
+    }
+  } else if (!menuEdge) {
+    menuBtnLatched = false;
+  }
+}
+
+function pulseHaptic(handIndex, intensity, durationMs) {
+  try {
+    const session = renderer?.xr?.getSession?.();
+    if (!session) return;
+    for (const src of session.inputSources) {
+      const hi = src.handedness === 'left' ? 0 : 1;
+      if (hi !== handIndex) continue;
+      const gp = src.gamepad;
+      const actuator = gp?.hapticActuators?.[0] || gp?.vibrationActuator;
+      if (actuator?.pulse) actuator.pulse(intensity, durationMs);
+    }
+  } catch {
+    /* no haptics */
   }
 }
 
@@ -252,11 +656,259 @@ function clearXRAxes() {
   gearLatched = false;
   releaseLatched = false;
   camLatched = false;
+  menuBtnLatched = false;
+  activeGrab = null;
+  hands[0].grabbing = null;
+  hands[1].grabbing = null;
+  hands[0].squeezeHeld = false;
+  hands[1].squeezeHeld = false;
+  hands[0].selectHeld = false;
+  hands[1].selectHeld = false;
+  controls.xrStickGrab = false;
+  controls.xrBrakeGrab = false;
+  controls.xrGearGrab = false;
+  controls.xrReleaseGrab = false;
+}
+
+// ═══════════════════════════════════════════════════════════
+// World-space VR menu
+// ═══════════════════════════════════════════════════════════
+
+function buildVRMenu() {
+  menuGroup = new THREE.Group();
+  menuGroup.name = 'xrMenu';
+  menuGroup.visible = false;
+  // Slightly below eye, 1.1 m forward
+  menuGroup.position.set(0, -0.12, -1.15);
+  xrRig.add(menuGroup);
+
+  // Panel background
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.85, 0.95),
+    new THREE.MeshBasicMaterial({
+      color: 0xf4f6f8,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: true,
+      side: THREE.DoubleSide,
+    })
+  );
+  panel.position.z = 0.01;
+  menuGroup.add(panel);
+
+  // Frame
+  const frame = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(0.85, 0.95)),
+    new THREE.LineBasicMaterial({ color: 0x2a6a78 })
+  );
+  frame.position.z = 0.012;
+  menuGroup.add(frame);
+
+  // Title
+  const title = makeTextPlane('LOW POLY GLIDER', 512, 64, {
+    font: 'bold 36px system-ui,sans-serif',
+    fill: '#1a4a58',
+  });
+  title.scale.set(0.55, 0.08, 1);
+  title.position.set(0, 0.38, 0.02);
+  menuGroup.add(title);
+
+  const sub = makeTextPlane('Point + trigger to select', 512, 40, {
+    font: '22px system-ui,sans-serif',
+    fill: '#5a7080',
+  });
+  sub.scale.set(0.5, 0.05, 1);
+  sub.position.set(0, 0.3, 0.02);
+  menuGroup.add(sub);
+
+  rebuildMenuButtons();
+}
+
+function rebuildMenuButtons() {
+  if (!menuGroup) return;
+  // Remove old buttons
+  for (const b of menuButtons) {
+    menuGroup.remove(b.mesh);
+    b.mesh.geometry?.dispose?.();
+    if (b.mesh.material?.map) b.mesh.material.map.dispose();
+    b.mesh.material?.dispose?.();
+  }
+  menuButtons = [];
+
+  const items = menuScenarios.length
+    ? menuScenarios
+    : [{ id: 'sandbox', name: 'Sandbox' }];
+
+  const startY = 0.18;
+  const rowH = 0.09;
+  items.forEach((sc, i) => {
+    const active = sc.id === menuActiveId;
+    const mesh = makeButtonMesh(sc.name, active);
+    mesh.position.set(0, startY - i * rowH, 0.025);
+    mesh.userData.menuAction = 'scenario';
+    mesh.userData.scenarioId = sc.id;
+    menuGroup.add(mesh);
+    menuButtons.push({ mesh, action: 'scenario', id: sc.id });
+  });
+
+  const launchY = startY - items.length * rowH - 0.06;
+  const launch = makeButtonMesh('LAUNCH', false, '#1a8a6a');
+  launch.position.set(0, launchY, 0.025);
+  launch.userData.menuAction = 'launch';
+  menuGroup.add(launch);
+  menuButtons.push({ mesh: launch, action: 'launch' });
+
+  const exit = makeButtonMesh(menuFlying ? 'EXIT TO MENU' : 'EXIT VR', false, '#8a4040');
+  exit.position.set(0, launchY - 0.1, 0.025);
+  exit.userData.menuAction = menuFlying ? 'exitMenu' : 'exitVR';
+  menuGroup.add(exit);
+  menuButtons.push({ mesh: exit, action: exit.userData.menuAction });
+
+  // Hint strip
+  const hint = makeTextPlane(
+    'Grab stick · twist = rudder · levers = brake / gear / release',
+    700,
+    48,
+    { font: '20px system-ui,sans-serif', fill: '#4a6870' }
+  );
+  hint.scale.set(0.72, 0.05, 1);
+  hint.position.set(0, launchY - 0.2, 0.02);
+  menuGroup.add(hint);
+}
+
+function makeButtonMesh(label, active, accent) {
+  const w = 0.62;
+  const h = 0.075;
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = active ? 'rgba(90,200,220,0.45)' : 'rgba(255,255,255,0.9)';
+  if (accent) ctx.fillStyle = accent;
+  roundRect(ctx, 4, 4, 504, 56, 10);
+  ctx.fill();
+  ctx.strokeStyle = active ? '#1a7080' : 'rgba(40,100,120,0.5)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = accent ? '#fff' : '#1a4a58';
+  ctx.font = 'bold 28px system-ui,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, 256, 34);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  mesh.userData.isMenuButton = true;
+  mesh.userData.baseScale = 1;
+  return mesh;
+}
+
+function makeTextPlane(text, cw, ch, opts) {
+  const canvas = document.createElement('canvas');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.fillStyle = opts.fill || '#222';
+  ctx.font = opts.font || '24px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cw / 2, ch / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(
+    new THREE.PlaneGeometry(1, ch / cw),
+    new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function setVRMenuVisible(vis) {
+  menuVisible = !!vis;
+  if (menuGroup) {
+    menuGroup.visible = menuVisible;
+    if (menuVisible) rebuildMenuButtons();
+  }
+}
+
+export function showVRMenu() {
+  setVRMenuVisible(true);
+}
+export function hideVRMenu() {
+  setVRMenuVisible(false);
+}
+
+const _raycaster = new THREE.Raycaster();
+const _ndc = new THREE.Vector2();
+
+function tryMenuSelect(handIndex) {
+  if (!menuVisible || !menuGroup) return;
+  const hit = raycastMenu(handIndex);
+  if (!hit) return;
+  const action = hit.userData.menuAction;
+  pulseHaptic(handIndex, 0.5, 30);
+  if (action === 'scenario' && hit.userData.scenarioId) {
+    menuActiveId = hit.userData.scenarioId;
+    onMenuSelect?.(menuActiveId);
+    rebuildMenuButtons();
+  } else if (action === 'launch') {
+    setVRMenuVisible(false);
+    onMenuLaunch?.();
+  } else if (action === 'exitMenu') {
+    setVRMenuVisible(false);
+    onMenuExit?.();
+  } else if (action === 'exitVR') {
+    const session = renderer?.xr?.getSession?.();
+    session?.end?.();
+  }
+}
+
+function raycastMenu(handIndex) {
+  const ctrl = hands[handIndex].ctrl;
+  if (!ctrl) return null;
+  ctrl.getWorldPosition(_v);
+  ctrl.getWorldDirection(_v2);
+  // Controllers point −Z
+  _v2.negate();
+  _raycaster.set(_v, _v2);
+  const meshes = menuButtons.map((b) => b.mesh);
+  const hits = _raycaster.intersectObjects(meshes, false);
+  return hits[0]?.object || null;
+}
+
+function updateMenuHover() {
+  for (let i = 0; i < 2; i++) {
+    const hit = raycastMenu(i);
+    for (const b of menuButtons) {
+      const hot = hit === b.mesh;
+      const s = hot ? 1.06 : 1;
+      b.mesh.scale.setScalar(s);
+    }
+  }
 }
 
 /**
  * Native-feeling VR button (HTTPS required on Quest for non-localhost).
- * @param {THREE.WebGLRenderer} renderer
  */
 export function createVRButton(renderer) {
   const button = document.createElement('button');
