@@ -596,7 +596,8 @@ function applyThumbstickFallback(session) {
   if (menuVisible && aButton && !gearLatched) {
     gearLatched = true;
     setVRMenuVisible(false);
-    requestAnimationFrame(() => onMenuLaunch?.());
+    menuFlying = true;
+    onMenuLaunch?.();
     return;
   }
 
@@ -987,11 +988,10 @@ function tryMenuSelect(handIndex) {
       if (menuVisible) rebuildMenuButtons();
     });
   } else if (action === 'launch') {
+    // Hide menu and start flight in the same turn (no async gap)
     setVRMenuVisible(false);
-    // Defer launch so menu hide + XR flags settle before flight starts
-    requestAnimationFrame(() => {
-      onMenuLaunch?.();
-    });
+    menuFlying = true;
+    onMenuLaunch?.();
   } else if (action === 'exitMenu') {
     setVRMenuVisible(false);
     onMenuExit?.();

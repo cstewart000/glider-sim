@@ -1216,6 +1216,7 @@ export function getWheelMesh(glider) {
  * hide exterior airframe / canopy glass. Chase: full glider, hide interior.
  */
 export function setCockpitVisible(glider, cockpitMode) {
+  if (!glider) return;
   const c = glider.getObjectByName('cockpitInterior');
   const wings = glider.getObjectByName('wings');
   const fuse = glider.userData.fuse;
@@ -1223,15 +1224,28 @@ export function setCockpitVisible(glider, cockpitMode) {
   const tail = glider.userData.tail || glider.getObjectByName('tail');
 
   if (cockpitMode) {
-    if (c) c.visible = true;
-    // Exterior wings hidden — cockpit draws its own wing-root stubs
+    // Interior on, exterior airframe off (cockpit has wing-root stubs)
+    if (c) {
+      c.visible = true;
+      c.traverse((o) => {
+        // Keep intentional invisible grab helpers hidden
+        if (o.name && /Grab$/i.test(o.name)) {
+          o.visible = false;
+          return;
+        }
+        if (o.isMesh || o.isLineSegments || o.isPoints || o.isGroup) {
+          o.visible = true;
+        }
+      });
+      // Grab volumes stay non-rendering
+      c.traverse((o) => {
+        if (o.name && /Grab$/i.test(o.name)) o.visible = false;
+      });
+    }
     if (wings) wings.visible = false;
     if (canopyObj) canopyObj.visible = false;
     if (fuse) {
-      fuse.visible = true;
-      fuse.traverse((o) => {
-        if (o.isMesh || o.isLineSegments) o.visible = false;
-      });
+      fuse.visible = false;
     }
     if (tail) tail.visible = false;
   } else {

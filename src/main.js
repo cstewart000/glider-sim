@@ -379,33 +379,20 @@ function updateCamera(dt, renderPos, renderQuat) {
   // —— WebXR: rig follows glider; headset provides look ——
   if (isXRPresenting()) {
     setCockpitOverlayVisible(false);
-    // Menu / title: hard-hide entire glider (cockpit must not occlude UI)
+    // Menu / title only — hide whole glider (do NOT traverse children;
+    // that permanently breaks cockpit mesh flags).
     const menuMode = isVRMenuVisible() || !running;
     if (menuMode) {
       gliderMesh.visible = false;
-      gliderMesh.traverse((o) => {
-        if (o.isMesh || o.isLineSegments || o.isPoints) o.visible = false;
-      });
-    } else {
-      gliderMesh.visible = true;
-      // Restore mesh visibility after menu hide
-      gliderMesh.traverse((o) => {
-        if (o.isMesh || o.isLineSegments || o.isPoints) o.visible = true;
-      });
-      const external = physics.rolling || physics.wingStrike || cameraMode !== 0;
-      if (external) {
-        setCockpitVisible(gliderMesh, false);
-      } else {
-        setCockpitVisible(gliderMesh, true);
-      }
-    }
-    // Eye: use a neutral seated pose when menu is up so UI sits cleanly ahead
-    if (menuMode) {
       camPos.copy(pos);
       _up.set(0, 1, 0).applyQuaternion(quat);
       _fwd.set(0, 0, -1).applyQuaternion(quat);
       camPos.addScaledVector(_up, 0.45).addScaledVector(_fwd, 0.05);
     } else {
+      // In flight: show cockpit (or external glider if chase/crash)
+      gliderMesh.visible = true;
+      const external = physics.rolling || physics.wingStrike || cameraMode !== 0;
+      setCockpitVisible(gliderMesh, !external);
       cockpitEyeFromPose(pos, quat, camPos);
     }
     updateXRRig(camPos, quat);
@@ -493,9 +480,15 @@ function updateCamera(dt, renderPos, renderQuat) {
 let running = false;
 let ended = false;
 
-async function startFlight() {
-  await flightAudio.ensureStarted();
+function startFlight() {
+  // Do not await audio — Quest can leave AudioContext.resume() pending and
+  // would block running=true (menu already closed → empty frozen VR world).
+  flightAudio.ensureStarted().catch(() => {});
+
   hideCrashFx();
+  hideVRMenu();
+  setXRFlying(true);
+
   const sc = getActiveScenario();
   // Height model first, then spawn AGL, then rebuild chunks around spawn
   const spawn = spawnForActiveScenario();
@@ -520,8 +513,10 @@ async function startFlight() {
   resetLook();
   lookYaw = 0;
   lookPitch = 0;
-  gliderMesh.visible = false;
   setCockpitOverlayVisible(false);
+  // XR: show cockpit immediately; desktop FP also wants the mesh
+  gliderMesh.visible = true;
+  setCockpitVisible(gliderMesh, true);
   camPos.copy(physics.position).add(new THREE.Vector3(0, 0.5, 0.3));
   clouds.seedAround(physics.position);
   terrain.world.update(physics.position, true);
@@ -530,8 +525,6 @@ async function startFlight() {
   showHUD();
   showCoachTip(coachForScenario(sc.id), 12);
   savePrefs({ scenarioId: sc.id });
-  setXRFlying(true);
-  hideVRMenu();
 }
 
 function endFlight() {
