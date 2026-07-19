@@ -22,8 +22,18 @@ export class FlightAudio {
     /** Tron / neon digital SFX profile */
     this.tronMode = false;
     this._tronHum = null;
+    this._tronHum2 = null;
     this._tronHumGain = null;
     this._tronLfo = null;
+    this._tronShimmer = null;
+    this._tronShimmerGain = null;
+    this._tronFilter = null;
+    this._tronWhooshTimer = 0;
+    this._tronIdleTimer = 0;
+    this._tronArpStep = 0;
+    this._tronLastSpd = 0;
+    this._tronPulse = null;
+    this._tronPulseGain = null;
     this._beepTimer = 0;
     this._sinkPulseTimer = 0;
     this._buffetPhase = 0;
@@ -362,6 +372,7 @@ export class FlightAudio {
     if (!this.ready || !this.ctx || this.ctx.state !== 'running') return;
     if (!state || (state.alive === false && !state.rolling)) {
       this._fadeAllWind(0.015, 0.12);
+      if (this.tronMode) this._fadeTronLayers(0.12);
       this._setGearMotor(0);
       this._setRollNoise(0);
       this._setAmb(0.012);
@@ -389,25 +400,16 @@ export class FlightAudio {
     this._wasRolling = !!state.rolling;
 
     // Quiet ambient always under flight
-    const ambBase = this.tronMode ? 0.04 : 0.028;
-    this._setAmb(ambBase + Math.min(0.05, spd / 700));
+    const ambBase = this.tronMode ? 0.015 : 0.028;
+    this._setAmb(ambBase + Math.min(0.04, spd / 800));
 
     if (this.tronMode) {
-      this._ensureTronHum();
-      const t0 = this.ctx.currentTime;
-      const spd01t = Math.min(1, Math.max(0, (spd - 6) / 50));
-      if (this._tronHumGain) {
-        this._tronHumGain.gain.setTargetAtTime(0.03 + spd01t * 0.06, t0, 0.1);
-      }
-      if (this._tronHum) {
-        this._tronHum.frequency.setTargetAtTime(48 + spd01t * 90, t0, 0.12);
-      }
-      if (this._tronHum2) {
-        this._tronHum2.frequency.setTargetAtTime(96 + spd01t * 160, t0, 0.12);
-      }
-    } else if (this._tronHumGain) {
-      this._tronHumGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.2);
+      this._updateTronEngine(dt, spd, brakes, stalled, aoa, state.vario || 0, lift);
+      this._updateRope(dt, state);
+      return;
     }
+    // Fade tron layers when leaving mode mid-flight
+    this._fadeTronLayers(0.22);
 
     if (state.rolling) {
       this._updateRollNoise(dt, spd, brakes, onRunway);
@@ -429,12 +431,10 @@ export class FlightAudio {
       ? 1
       : Math.min(1, Math.max(0, (aoaAbs - 0.18) / 0.12));
 
-    // Base far-air (Tron: thinner digital rush)
-    const baseVol = this.tronMode
-      ? Math.min(0.4, 0.04 + spd01 * 0.28)
-      : Math.min(0.55, 0.03 + spd01 * 0.38);
-    const baseHz = this.tronMode ? 900 + spd01 * 2200 : 260 + spd01 * 900;
-    const baseShelf = this.tronMode ? 4 + spd01 * 6 : -10 + spd01 * 9;
+    // Base far-air
+    const baseVol = Math.min(0.55, 0.03 + spd01 * 0.38);
+    const baseHz = 260 + spd01 * 900;
+    const baseShelf = -10 + spd01 * 9;
     const t = this.ctx.currentTime;
     this._windBaseGain.gain.setTargetAtTime(Math.max(0.0001, baseVol), t, 0.07);
     this._windBaseFilter.frequency.setTargetAtTime(baseHz, t, 0.09);
@@ -492,7 +492,7 @@ export class FlightAudio {
   }
 
   /**
-   * Neon digital sound profile (Tron mode).
+   * Neon digital sound profile (Tron / light-cycle).
    * @param {boolean} on
    */
   setTronMode(on) {
@@ -500,56 +500,377 @@ export class FlightAudio {
     if (!this.ctx || !this.ready) return;
     const t = this.ctx.currentTime;
     if (this.tronMode) {
-      this._ensureTronHum();
+      this._ensureTronEngine();
       if (this._tronHumGain) {
-        this._tronHumGain.gain.setTargetAtTime(0.045, t, 0.2);
+        this._tronHumGain.gain.setTargetAtTime(0.07, t, 0.12);
       }
-      if (this._tronHum) {
-        this._tronHum.frequency.setTargetAtTime(55, t, 0.15);
+      if (this._tronShimmerGain) {
+        this._tronShimmerGain.gain.setTargetAtTime(0.022, t, 0.12);
       }
-      // Brighter, thinner wind bed
-      if (this._windBaseFilter) {
-        this._windBaseFilter.frequency.setTargetAtTime(1200, t, 0.2);
+      if (this._tronPulseGain) {
+        this._tronPulseGain.gain.setTargetAtTime(0.04, t, 0.12);
       }
-    } else if (this._tronHumGain) {
-      this._tronHumGain.gain.setTargetAtTime(0.0001, t, 0.25);
+      // Power-up: rising grid zap + disc blip
+      this._playTronZap(0.28, 180, 2400, 0.16);
+      this._playTronBlip(1760, 0.06, 0.12);
+    } else {
+      if (this._tronHumGain) {
+        this._tronHumGain.gain.setTargetAtTime(0.0001, t, 0.25);
+      }
+      if (this._tronShimmerGain) {
+        this._tronShimmerGain.gain.setTargetAtTime(0.0001, t, 0.2);
+      }
+      if (this._tronPulseGain) {
+        this._tronPulseGain.gain.setTargetAtTime(0.0001, t, 0.2);
+      }
     }
   }
 
-  _ensureTronHum() {
+  /** Full light-cycle style synth stack (TRON grid / disc energy). */
+  _ensureTronEngine() {
     if (!this.ctx || this._tronHum) return;
     const ctx = this.ctx;
+    const dest = this._masterHP || ctx.destination;
+
+    // —— Light-cycle engine: detuned saw + square through resonant filter ——
     this._tronHum = ctx.createOscillator();
     this._tronHum.type = 'sawtooth';
     this._tronHum.frequency.value = 55;
-    const hum2 = ctx.createOscillator();
-    hum2.type = 'square';
-    hum2.frequency.value = 110;
+    this._tronHum2 = ctx.createOscillator();
+    this._tronHum2.type = 'square';
+    this._tronHum2.frequency.value = 110;
+    const hum3 = ctx.createOscillator();
+    hum3.type = 'sawtooth';
+    hum3.frequency.value = 56.4; // slight detune = analog-digital grit
+    this._tronHum3 = hum3;
+
+    this._tronFilter = ctx.createBiquadFilter();
+    this._tronFilter.type = 'lowpass';
+    this._tronFilter.frequency.value = 380;
+    this._tronFilter.Q.value = 8;
+
     this._tronLfo = ctx.createOscillator();
     this._tronLfo.type = 'sine';
-    this._tronLfo.frequency.value = 0.35;
+    this._tronLfo.frequency.value = 0.32;
     const lfoG = ctx.createGain();
-    lfoG.gain.value = 8;
+    lfoG.gain.value = 14;
     this._tronLfo.connect(lfoG);
     lfoG.connect(this._tronHum.frequency);
+    this._tronLfoDepth = lfoG;
 
-    const filt = ctx.createBiquadFilter();
-    filt.type = 'lowpass';
-    filt.frequency.value = 280;
-    filt.Q.value = 4;
     this._tronHumGain = ctx.createGain();
     this._tronHumGain.gain.value = 0.0001;
-    const g2 = ctx.createGain();
-    g2.gain.value = 0.12;
-    this._tronHum.connect(filt);
-    hum2.connect(g2);
-    g2.connect(filt);
-    filt.connect(this._tronHumGain);
-    this._tronHumGain.connect(this._masterHP || ctx.destination);
+    const mix2 = ctx.createGain();
+    mix2.gain.value = 0.28;
+    const mix3 = ctx.createGain();
+    mix3.gain.value = 0.2;
+    this._tronHum.connect(this._tronFilter);
+    this._tronHum2.connect(mix2);
+    mix2.connect(this._tronFilter);
+    hum3.connect(mix3);
+    mix3.connect(this._tronFilter);
+    this._tronFilter.connect(this._tronHumGain);
+    this._tronHumGain.connect(dest);
+
+    // —— Sub pulse (light-cycle “idle throb”) ——
+    this._tronPulse = ctx.createOscillator();
+    this._tronPulse.type = 'sine';
+    this._tronPulse.frequency.value = 27.5;
+    this._tronPulseGain = ctx.createGain();
+    this._tronPulseGain.gain.value = 0.0001;
+    const pulseLfo = ctx.createOscillator();
+    pulseLfo.type = 'sine';
+    pulseLfo.frequency.value = 2.2;
+    const pulseDepth = ctx.createGain();
+    pulseDepth.gain.value = 0.018;
+    pulseLfo.connect(pulseDepth);
+    pulseDepth.connect(this._tronPulseGain.gain);
+    this._tronPulse.connect(this._tronPulseGain);
+    this._tronPulseGain.connect(dest);
+    this._tronPulseLfo = pulseLfo;
+
+    // —— High disc shimmer / grid sparkle ——
+    this._tronShimmer = ctx.createOscillator();
+    this._tronShimmer.type = 'square';
+    this._tronShimmer.frequency.value = 1320;
+    const shimFilt = ctx.createBiquadFilter();
+    shimFilt.type = 'bandpass';
+    shimFilt.frequency.value = 3200;
+    shimFilt.Q.value = 4;
+    this._tronShimmerGain = ctx.createGain();
+    this._tronShimmerGain.gain.value = 0.0001;
+    const shimLfo = ctx.createOscillator();
+    shimLfo.type = 'triangle';
+    shimLfo.frequency.value = 7.5;
+    const shimLfoG = ctx.createGain();
+    shimLfoG.gain.value = 0.014;
+    shimLfo.connect(shimLfoG);
+    shimLfoG.connect(this._tronShimmerGain.gain);
+    this._tronShimmer.connect(shimFilt);
+    shimFilt.connect(this._tronShimmerGain);
+    this._tronShimmerGain.connect(dest);
+    this._tronShimFilt = shimFilt;
+
     this._tronHum.start();
-    hum2.start();
+    this._tronHum2.start();
+    hum3.start();
     this._tronLfo.start();
-    this._tronHum2 = hum2;
+    this._tronPulse.start();
+    pulseLfo.start();
+    this._tronShimmer.start();
+    shimLfo.start();
+    this._tronShimLfo = shimLfo;
+  }
+
+  /**
+   * Continuous Tron flight bed + digital events.
+   */
+  _updateTronEngine(dt, spd, brakes, stalled, aoa, vario, lift) {
+    this._ensureTronEngine();
+    const t = this.ctx.currentTime;
+    const spd01 = Math.min(1, Math.max(0, (spd - 4) / 48));
+
+    // Kill organic layers — pure grid synth
+    this._windBaseGain?.gain.setTargetAtTime(0.0001, t, 0.08);
+    this._setCanopy(0.0001, 800);
+    this._setBuffet(0, 8);
+    this._setRollNoise(0);
+    this._setSinkTone(0, 400, t);
+    this._setAmb(0.008 + spd01 * 0.01);
+
+    // Engine pitch + filter open with speed (light-cycle rev)
+    const baseHz = 42 + spd01 * 165;
+    if (this._tronHum) {
+      this._tronHum.frequency.setTargetAtTime(baseHz, t, 0.09);
+    }
+    if (this._tronHum2) {
+      this._tronHum2.frequency.setTargetAtTime(baseHz * 2, t, 0.09);
+    }
+    if (this._tronHum3) {
+      this._tronHum3.frequency.setTargetAtTime(baseHz * 1.027, t, 0.09);
+    }
+    if (this._tronFilter) {
+      // Resonant “vowel” opens as you accelerate — classic synth rev
+      this._tronFilter.frequency.setTargetAtTime(
+        220 + spd01 * 2800 + brakes * 500,
+        t,
+        0.07
+      );
+      this._tronFilter.Q.setTargetAtTime(6 + spd01 * 6 + brakes * 3, t, 0.1);
+    }
+    if (this._tronHumGain) {
+      this._tronHumGain.gain.setTargetAtTime(0.045 + spd01 * 0.12 + brakes * 0.04, t, 0.07);
+    }
+    if (this._tronPulse) {
+      this._tronPulse.frequency.setTargetAtTime(22 + spd01 * 38, t, 0.12);
+    }
+    if (this._tronPulseGain) {
+      this._tronPulseGain.gain.setTargetAtTime(0.028 + spd01 * 0.045, t, 0.1);
+    }
+    if (this._tronPulseLfo) {
+      this._tronPulseLfo.frequency.setTargetAtTime(1.8 + spd01 * 4.5, t, 0.12);
+    }
+    if (this._tronLfo) {
+      this._tronLfo.frequency.setTargetAtTime(0.25 + spd01 * 0.9, t, 0.15);
+    }
+    if (this._tronLfoDepth) {
+      this._tronLfoDepth.gain.setTargetAtTime(10 + spd01 * 18, t, 0.15);
+    }
+    if (this._tronShimmer) {
+      this._tronShimmer.frequency.setTargetAtTime(880 + spd01 * 2200, t, 0.1);
+    }
+    if (this._tronShimFilt) {
+      this._tronShimFilt.frequency.setTargetAtTime(2000 + spd01 * 2800, t, 0.12);
+    }
+    if (this._tronShimmerGain) {
+      this._tronShimmerGain.gain.setTargetAtTime(0.01 + spd01 * 0.05 + brakes * 0.02, t, 0.1);
+    }
+    if (this._tronShimLfo) {
+      this._tronShimLfo.frequency.setTargetAtTime(5 + spd01 * 12, t, 0.12);
+    }
+
+    // Acceleration whoosh / disc surge
+    const dSpd = (spd - this._tronLastSpd) / Math.max(dt, 1e-3);
+    this._tronLastSpd = spd;
+    this._tronWhooshTimer -= dt;
+    if (dSpd > 6 && this._tronWhooshTimer <= 0) {
+      this._tronWhooshTimer = 0.16;
+      this._playTronWhoosh(0.12 + Math.min(0.18, dSpd * 0.01), spd01);
+    }
+
+    // Stall = system alarm (descending digital zaps)
+    if (stalled || Math.abs(aoa) > 0.22) {
+      this._stallBuzzTimer -= dt;
+      if (this._stallBuzzTimer <= 0) {
+        this._stallBuzzTimer = 0.055;
+        this._playTronZap(0.12, 220 + Math.random() * 80, 70, 0.05);
+      }
+    } else {
+      this._stallBuzzTimer = 0;
+    }
+
+    // Digital arpeggio “vario” (neon UI)
+    this._updateTronVario(dt, vario, lift, spd01);
+  }
+
+  _updateTronVario(dt, vs, lift, spd01) {
+    // Climb: ascending neon arpeggio; sink: descending zaps
+    if (vs > 0.25) {
+      const climb01 = Math.min(1, (vs - 0.25) / 4);
+      const interval = 0.12 - climb01 * 0.065;
+      this._beepTimer -= dt;
+      if (this._beepTimer <= 0) {
+        this._beepTimer = Math.max(0.05, interval);
+        // Minor pentatonic-ish neon ladder
+        const steps = [0, 3, 5, 7, 10, 12, 15, 19];
+        const step = steps[this._tronArpStep % steps.length];
+        this._tronArpStep++;
+        const base = 660 + climb01 * 320 + spd01 * 50;
+        const freq = base * Math.pow(2, step / 12);
+        this._playTronBlip(freq, 0.04 + climb01 * 0.025, 0.16 + climb01 * 0.12);
+      }
+    } else if (vs < -0.25) {
+      const sink01 = Math.min(1, (-vs - 0.25) / 5);
+      this._beepTimer -= dt;
+      if (this._beepTimer <= 0) {
+        this._beepTimer = 0.2 - sink01 * 0.09;
+        const freq = 420 - sink01 * 180;
+        this._playTronZap(0.1 + sink01 * 0.1, freq * 1.5, freq * 0.45, 0.08);
+      }
+    } else {
+      this._beepTimer = Math.min(this._beepTimer, 0.05);
+      // Sparse idle grid tick while cruising
+      this._tronIdleTimer -= dt;
+      if (this._tronIdleTimer <= 0 && spd01 > 0.2) {
+        this._tronIdleTimer = 1.1 + Math.random() * 0.9;
+        this._playTronBlip(180 + spd01 * 90, 0.028, 0.035);
+      }
+    }
+  }
+
+  /** Short glass/disc blip (vario / UI / power-on). */
+  _playTronBlip(freq, duration, peakGain) {
+    if (!this.ctx || this.ctx.state !== 'running' || !this._fxGain) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(freq, t0);
+    o.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 0.88), t0 + duration);
+    const o2 = ctx.createOscillator();
+    o2.type = 'triangle';
+    o2.frequency.setValueAtTime(freq * 2.01, t0);
+    o2.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 1.78), t0 + duration);
+    const g = ctx.createGain();
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.18;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, peakGain), t0 + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = freq * 1.35;
+    bp.Q.value = 4.5;
+    // Soft ring-mod grit via high partial
+    const o3 = ctx.createOscillator();
+    o3.type = 'sine';
+    o3.frequency.value = freq * 3.5;
+    const g3 = ctx.createGain();
+    g3.gain.value = 0.08;
+    o.connect(bp);
+    o2.connect(g2);
+    g2.connect(bp);
+    o3.connect(g3);
+    g3.connect(bp);
+    bp.connect(g);
+    g.connect(this._fxGain);
+    o.start(t0);
+    o2.start(t0);
+    o3.start(t0);
+    o.stop(t0 + duration + 0.02);
+    o2.stop(t0 + duration + 0.02);
+    o3.stop(t0 + duration + 0.02);
+  }
+
+  /** Sweeping zap (power-up / sink / alarm). */
+  _playTronZap(peak, f0, f1, duration) {
+    if (!this.ctx || this.ctx.state !== 'running' || !this._fxGain) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(Math.max(40, f0), t0);
+    o.frequency.exponentialRampToValueAtTime(Math.max(40, f1), t0 + duration);
+    const o2 = ctx.createOscillator();
+    o2.type = 'square';
+    o2.frequency.setValueAtTime(Math.max(40, f0 * 0.5), t0);
+    o2.frequency.exponentialRampToValueAtTime(Math.max(40, f1 * 0.5), t0 + duration);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(Math.max(0.001, peak), t0 + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 90;
+    const mix2 = ctx.createGain();
+    mix2.gain.value = 0.35;
+    o.connect(hp);
+    o2.connect(mix2);
+    mix2.connect(hp);
+    hp.connect(g);
+    g.connect(this._fxGain);
+    o.start(t0);
+    o2.start(t0);
+    o.stop(t0 + duration + 0.02);
+    o2.stop(t0 + duration + 0.02);
+  }
+
+  /** Acceleration whoosh — light-cycle surge across the grid. */
+  _playTronWhoosh(peak, spd01) {
+    if (!this.ctx || this.ctx.state !== 'running' || !this._fxGain) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const dur = 0.12 + spd01 * 0.1;
+    // Main rising saw
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    const f0 = 140 + spd01 * 220;
+    o.frequency.setValueAtTime(f0, t0);
+    o.frequency.exponentialRampToValueAtTime(f0 * 4.2, t0 + dur);
+    // Octave square for digital edge
+    const o2 = ctx.createOscillator();
+    o2.type = 'square';
+    o2.frequency.setValueAtTime(f0 * 2, t0);
+    o2.frequency.exponentialRampToValueAtTime(f0 * 6.5, t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(peak, t0 + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.25;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(300, t0);
+    bp.frequency.exponentialRampToValueAtTime(4200, t0 + dur);
+    bp.Q.value = 2.4;
+    o.connect(bp);
+    o2.connect(g2);
+    g2.connect(bp);
+    bp.connect(g);
+    g.connect(this._fxGain);
+    o.start(t0);
+    o2.start(t0);
+    o.stop(t0 + dur + 0.02);
+    o2.stop(t0 + dur + 0.02);
+  }
+
+  /** Fade all continuous Tron layers (crash / leave mode). */
+  _fadeTronLayers(tc = 0.15) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (this._tronHumGain) this._tronHumGain.gain.setTargetAtTime(0.0001, t, tc);
+    if (this._tronShimmerGain) this._tronShimmerGain.gain.setTargetAtTime(0.0001, t, tc);
+    if (this._tronPulseGain) this._tronPulseGain.gain.setTargetAtTime(0.0001, t, tc);
   }
 
   _updateThermalHum(lift) {
@@ -792,6 +1113,7 @@ export class FlightAudio {
 
   stop() {
     this._fadeAllWind(0.0001, 0.15);
+    this._fadeTronLayers(0.12);
     this._setAmb(0.0001);
     this._beepTimer = 0;
     this._setGearMotor(0);
@@ -929,6 +1251,10 @@ export class FlightAudio {
   /** Soft/hard touchdown thump — scales with speed. */
   playTouchdown(spd, onRunway = false) {
     if (!this.ctx || this.ctx.state !== 'running' || !this._fxGain) return;
+    if (this.tronMode) {
+      this._playTronTouchdown(spd);
+      return;
+    }
     const ctx = this.ctx;
     const t0 = ctx.currentTime;
     const r01 = Math.min(1, Math.max(0.15, (spd || 12) / 30));
@@ -982,9 +1308,23 @@ export class FlightAudio {
     src.start(t0);
   }
 
+  /** Digital grid contact — touchdown in Tron. */
+  _playTronTouchdown(spd) {
+    const r01 = Math.min(1, Math.max(0.2, (spd || 12) / 30));
+    this._playTronZap(0.2 + r01 * 0.25, 90, 40, 0.14);
+    this._playTronBlip(520 + r01 * 400, 0.05, 0.12 + r01 * 0.1);
+    this._playTronWhoosh(0.08 + r01 * 0.08, r01);
+  }
+
   /** Cable / tow rope release snap. */
   playCableRelease() {
     if (!this.ctx || this.ctx.state !== 'running' || !this._fxGain) return;
+    if (this.tronMode) {
+      // Disconnect from grid power
+      this._playTronZap(0.32, 1400, 120, 0.18);
+      this._playTronBlip(880, 0.04, 0.14);
+      return;
+    }
     const ctx = this.ctx;
     const t0 = ctx.currentTime;
 
@@ -1024,6 +1364,11 @@ export class FlightAudio {
   /** Weak-link overload pop. */
   playWeakLink() {
     if (!this.ctx || this.ctx.state !== 'running' || !this._fxGain) return;
+    if (this.tronMode) {
+      this._playTronZap(0.4, 600, 80, 0.12);
+      this._playTronZap(0.25, 2000, 400, 0.08);
+      return;
+    }
     const ctx = this.ctx;
     const t0 = ctx.currentTime;
     const o = ctx.createOscillator();
@@ -1041,6 +1386,10 @@ export class FlightAudio {
 
   playCrash() {
     if (!this.ctx || this.ctx.state !== 'running') return;
+    if (this.tronMode) {
+      this._playTronDerez();
+      return;
+    }
     const ctx = this.ctx;
     const t0 = ctx.currentTime;
 
@@ -1120,6 +1469,106 @@ export class FlightAudio {
     this._setGearMotor(0);
   }
 
+  /** Derez — digital disintegration crash (TRON). */
+  _playTronDerez() {
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const bus = ctx.createGain();
+    bus.gain.value = 1.6;
+    bus.connect(this._masterHP || ctx.destination);
+
+    // Cascading downward zaps (identity shatter)
+    const zaps = [
+      [0, 1800, 200, 0.12, 0.55],
+      [0.04, 1200, 90, 0.16, 0.48],
+      [0.1, 800, 55, 0.22, 0.4],
+      [0.18, 400, 40, 0.35, 0.35],
+      [0.3, 220, 30, 0.5, 0.28],
+    ];
+    for (const [start, f0, f1, dur, peak] of zaps) {
+      const o = ctx.createOscillator();
+      o.type = start < 0.15 ? 'sawtooth' : 'square';
+      const t = t0 + start;
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 60;
+      o.connect(hp);
+      hp.connect(g);
+      g.connect(bus);
+      o.start(t);
+      o.stop(t + dur + 0.03);
+    }
+
+    // Bit-crush-ish noise spray
+    const n = Math.floor(ctx.sampleRate * 1.1);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let hold = 0;
+    let holdLeft = 0;
+    for (let i = 0; i < n; i++) {
+      if (holdLeft <= 0) {
+        hold = Math.random() * 2 - 1;
+        holdLeft = 2 + Math.floor(Math.random() * 18 * (1 - i / n));
+      }
+      holdLeft--;
+      const e = Math.pow(1 - i / n, 0.85);
+      data[i] = hold * e * (i < n * 0.05 ? 1.3 : 1);
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(2400, t0);
+    bp.frequency.exponentialRampToValueAtTime(180, t0 + 1.0);
+    bp.Q.value = 1.2;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t0);
+    ng.gain.linearRampToValueAtTime(0.9, t0 + 0.02);
+    ng.gain.linearRampToValueAtTime(0.35, t0 + 0.35);
+    ng.gain.linearRampToValueAtTime(0.0001, t0 + 1.1);
+    src.connect(bp);
+    bp.connect(ng);
+    ng.connect(bus);
+    src.start(t0);
+
+    // Final glass disc shatter blips
+    for (let i = 0; i < 5; i++) {
+      const delay = 0.05 + i * 0.07;
+      const f = 1600 - i * 280 + Math.random() * 120;
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = f;
+      const g = ctx.createGain();
+      const tt = t0 + delay;
+      g.gain.setValueAtTime(0.0001, tt);
+      g.gain.exponentialRampToValueAtTime(0.18 - i * 0.025, tt + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, tt + 0.05);
+      o.connect(g);
+      g.connect(bus);
+      o.start(tt);
+      o.stop(tt + 0.06);
+    }
+
+    if (this._master) {
+      const m = this._master.gain;
+      const vol = 0.62 * (this._userVolume ?? 0.7);
+      m.cancelScheduledValues(t0);
+      m.setValueAtTime(this._master.gain.value, t0);
+      m.linearRampToValueAtTime(0.15, t0 + 0.03);
+      m.linearRampToValueAtTime(vol, t0 + 1.8);
+    }
+    this._fadeTronLayers(0.04);
+    this._fadeAllWind(0, 0.03);
+    this._setSinkTone(0, 200, t0);
+    this._setGearMotor(0);
+  }
+
   notifyGearToggle(gearDown) {
     if (!this.ready || !this.ctx) return;
     if (this.ctx.state === 'suspended') this.ctx.resume();
@@ -1160,16 +1609,30 @@ export class FlightAudio {
     if (this._gearWasMoving && t < this._gearMotorUntil) {
       const remaining = Math.max(0, this._gearMotorUntil - t);
       const travel = 1 - Math.min(1, remaining / motorDur);
-      this._setGearMotor(0.2);
-      if (this._gearOsc) {
-        const base = target === 0 ? 125 : 95;
-        this._gearOsc.frequency.setTargetAtTime(base + travel * 40, t, 0.06);
-      }
-      if (this._gearOsc2) {
-        this._gearOsc2.frequency.setTargetAtTime((target === 0 ? 250 : 190) + travel * 50, t, 0.06);
-      }
-      if (this._gearFilter) {
-        this._gearFilter.frequency.setTargetAtTime(1800 + travel * 600, t, 0.08);
+      if (this.tronMode) {
+        // Quiet digital servo hum instead of motor grind
+        this._setGearMotor(0.06);
+        if (this._gearOsc) {
+          this._gearOsc.frequency.setTargetAtTime(180 + travel * 120, t, 0.05);
+        }
+        if (this._gearOsc2) {
+          this._gearOsc2.frequency.setTargetAtTime(360 + travel * 200, t, 0.05);
+        }
+        if (this._gearFilter) {
+          this._gearFilter.frequency.setTargetAtTime(2400 + travel * 800, t, 0.06);
+        }
+      } else {
+        this._setGearMotor(0.2);
+        if (this._gearOsc) {
+          const base = target === 0 ? 125 : 95;
+          this._gearOsc.frequency.setTargetAtTime(base + travel * 40, t, 0.06);
+        }
+        if (this._gearOsc2) {
+          this._gearOsc2.frequency.setTargetAtTime((target === 0 ? 250 : 190) + travel * 50, t, 0.06);
+        }
+        if (this._gearFilter) {
+          this._gearFilter.frequency.setTargetAtTime(1800 + travel * 600, t, 0.08);
+        }
       }
     } else if (this._gearWasMoving && t >= this._gearMotorUntil) {
       this._playGearClunk(target === 1 ? 'lock-down' : 'lock-up');
@@ -1195,11 +1658,18 @@ export class FlightAudio {
 
   _playGearClunk(kind) {
     if (!this.ctx || this.ctx.state !== 'running') return;
+    const isLock = kind.startsWith('lock');
+    const isUp = kind.includes('up');
+    if (this.tronMode) {
+      // Servo blip instead of mechanical clunk
+      const f = isLock ? (isUp ? 990 : 660) : isUp ? 440 : 330;
+      this._playTronBlip(f, isLock ? 0.05 : 0.035, isLock ? 0.12 : 0.08);
+      if (isLock) this._playTronZap(0.08, f * 1.5, f * 0.6, 0.06);
+      return;
+    }
     const ctx = this.ctx;
     const t0 = ctx.currentTime;
     const out = this._fxGain || ctx.destination;
-    const isLock = kind.startsWith('lock');
-    const isUp = kind.includes('up');
 
     if (this._gearGain) {
       const cur = Math.max(0.0001, this._gearGain.gain.value);
