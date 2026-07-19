@@ -42,7 +42,7 @@ import {
 } from './xr.js';
 import { loadPrefs, savePrefs, getVolume, getTronMode } from './prefs.js';
 import {
-  LightTrail, setTronMode, toggleTronMode, isTronMode,
+  LightTrail, setTronMode, toggleTronMode, isTronMode, applyTronScene,
 } from './tronMode.js';
 
 // Injected by Vite at build/dev time — shows on title so Quest cache is obvious
@@ -789,14 +789,17 @@ function tick(_time, frame) {
     gliderMesh.quaternion.copy(_renderQuat);
     updateControlSurfaces(gliderMesh, controls, frameDt);
     updateCockpitInstruments(gliderMesh, physics, frameDt);
-    // Light-cycle trail (Tron)
+    // Light-cycle ribbons from winglets (Tron)
     if (isTronMode() && physics.alive && !physics.rolling) {
-      _trailPos.copy(_renderPos);
-      _up.set(0, 1, 0).applyQuaternion(_renderQuat);
-      _trailPos.addScaledVector(_up, -0.35);
-      tronTrail.update(_trailPos, true, physics.airspeed);
+      tronTrail.updateFromGlider(
+        gliderMesh,
+        _renderPos,
+        _renderQuat,
+        true,
+        physics.airspeed
+      );
     } else {
-      tronTrail.update(_renderPos, false);
+      tronTrail.setActive(false);
     }
     if (!isXRPresenting()) updateCockpitOverlay(controls, frameDt);
     if (physics.rolling) {

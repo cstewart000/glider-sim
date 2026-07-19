@@ -564,6 +564,7 @@ export function createGlider() {
     pivot.add(ailHinge);
 
     const aileron = new THREE.Mesh(aileronGeo, red);
+    aileron.name = sign > 0 ? 'aileronRight' : 'aileronLeft';
     // Geometry already spans +X from 0; flip for left wing
     if (sign < 0) {
       aileron.scale.x = -1;
@@ -585,6 +586,7 @@ export function createGlider() {
     brakeHinge.position.set(sign * 2.2, 0.06, 0.0);
     pivot.add(brakeHinge);
     const brake = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.012, 0.55), red);
+    brake.name = sign > 0 ? 'brakeRight' : 'brakeLeft';
     brake.position.set(sign * 0.8, 0.008, 0.05);
     brakeHinge.add(brake);
     addEdges(brake, 16);
@@ -618,6 +620,7 @@ export function createGlider() {
     makeVerticalSurfaceGeo(0, finH * 0.75, 0, 0.42, 0.06),
     red
   );
+  rudder.name = 'rudder';
   rudderHinge.add(rudder);
   addEdges(rudder, 12);
 
@@ -638,6 +641,7 @@ export function createGlider() {
     makeHStabGeo(1.35, 0, 0.36, 0.04),
     red
   );
+  elevator.name = 'elevator';
   elevHinge.add(elevator);
   addEdges(elevator, 12);
 
