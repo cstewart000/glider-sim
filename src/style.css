@@ -916,6 +916,41 @@ html.xr-active #vr-button {
   font-variant-numeric: tabular-nums;
   word-break: break-all;
 }
+
+/* Tron neon HUD chrome */
+html.tron-mode #hud {
+  filter: drop-shadow(0 0 6px rgba(0, 230, 255, 0.35));
+}
+html.tron-mode .holo-gauge,
+html.tron-mode .holo-chip,
+html.tron-mode #tow-panel,
+html.tron-mode #sandbox-panel,
+html.tron-mode #landing-panel,
+html.tron-mode #xc-panel {
+  border-color: rgba(0, 230, 255, 0.75) !important;
+  background: rgba(0, 20, 30, 0.72) !important;
+  color: #7ef0ff !important;
+  box-shadow: 0 0 16px rgba(0, 200, 255, 0.25);
+}
+html.tron-mode .chip-value,
+html.tron-mode .g-value,
+html.tron-mode #tow-station,
+html.tron-mode #sandbox-title {
+  color: #a8f8ff !important;
+}
+html.tron-mode #title-screen {
+  background: radial-gradient(ellipse at center, rgba(0, 40, 60, 0.55) 0%, rgba(0, 4, 12, 0.88) 100%);
+}
+html.tron-mode .panel {
+  background: rgba(0, 12, 22, 0.92);
+  border-color: rgba(0, 230, 255, 0.45);
+  color: #b8f0ff;
+}
+html.tron-mode .panel h1,
+html.tron-mode .menu-heading {
+  color: #00e8ff;
+  text-shadow: 0 0 12px rgba(0, 230, 255, 0.45);
+}
 /* legacy list (if any remain) */
 .controls {
   list-style: none;

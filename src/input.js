@@ -26,6 +26,8 @@ export const controls = {
   /** Return to scenario menu (edge) */
   menu: false,
   gearToggle: false,
+  /** Toggle Tron neon mode (edge) */
+  tronToggle: false,
   /** XR physical grab flags — skip smoothed stick/lever visuals */
   xrStickGrab: false,
   xrBrakeGrab: false,
@@ -53,6 +55,7 @@ const map = {
   KeyR: 'restart',
   KeyM: 'menu',
   KeyG: 'gear',
+  KeyT: 'tron',
 };
 
 /** Digit / numpad → look direction 1–9 */
@@ -92,6 +95,7 @@ let camLatched = false;
 let restartLatched = false;
 let menuLatched = false;
 let gearLatched = false;
+let tronLatched = false;
 
 export function updateInput() {
   // Default: W/↑ = nose down, S/↓ = nose up (aircraft-style push stick)
@@ -139,6 +143,15 @@ export function updateInput() {
   } else {
     controls.gearToggle = false;
     if (!keys.gear) gearLatched = false;
+  }
+
+  // T toggles Tron neon mode
+  if (keys.tron && !tronLatched) {
+    controls.tronToggle = true;
+    tronLatched = true;
+  } else {
+    controls.tronToggle = false;
+    if (!keys.tron) tronLatched = false;
   }
 }
 

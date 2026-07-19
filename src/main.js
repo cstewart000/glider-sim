@@ -40,7 +40,10 @@ import {
   initXR, updateXRRig, updateXRControls, isXRPresenting, isVRMenuVisible,
   setXRFlying, setXRMenuScenarios, setXRGlider, showVRMenu, hideVRMenu,
 } from './xr.js';
-import { loadPrefs, savePrefs, getVolume } from './prefs.js';
+import { loadPrefs, savePrefs, getVolume, getTronMode } from './prefs.js';
+import {
+  LightTrail, setTronMode, toggleTronMode, isTronMode,
+} from './tronMode.js';
 
 // Injected by Vite at build/dev time — shows on title so Quest cache is obvious
 const BUILD_ID =
@@ -292,8 +295,10 @@ function applyScenarioWorld(scenarioId, around) {
   ridgeVapor.setVisible(!isAirfield);
   if (!isAirfield) ridgeVapor.seedAround(pos);
 
-  // Concept-art white fog; coastal slightly cooler
-  if (profile === 'coastal') {
+  // Concept-art white fog; coastal slightly cooler (Tron overrides)
+  if (isTronMode()) {
+    applyTronScene(tronCtx(), true);
+  } else if (profile === 'coastal') {
     scene.fog.color.set(0xe2ebf2);
     scene.fog.near = 400;
     scene.fog.far = 2100;
@@ -321,6 +326,17 @@ function sampleWindForPhysics(x, y, z, out) {
 // —— Glider ——
 const gliderMesh = createGlider();
 scene.add(gliderMesh);
+
+// Tron light-cycle trail (active only in Tron mode)
+const tronTrail = new LightTrail(scene);
+const tronCtx = () => ({
+  scene,
+  renderer,
+  glider: gliderMesh,
+  sunGroup,
+  audio: flightAudio,
+  trail: tronTrail,
+});
 const physics = new GliderPhysics();
 
 // —— Camera ——
@@ -647,6 +663,15 @@ setXRGlider(gliderMesh);
       savePrefs({ invertPitch: invEl.checked });
     });
   }
+  const tronEl = document.getElementById('pref-tron');
+  if (tronEl) {
+    tronEl.checked = getTronMode();
+    tronEl.addEventListener('change', () => {
+      setTronMode(tronEl.checked, tronCtx());
+      savePrefs({ tronMode: tronEl.checked });
+    });
+  }
+  if (getTronMode()) setTronMode(true, tronCtx());
 }
 setupScenarioMenu(SCENARIO_LIST, getActiveScenario().id, (id) => {
   previewScenario(id);
@@ -680,6 +705,7 @@ const _physPrevPos = new THREE.Vector3();
 const _physPrevQuat = new THREE.Quaternion();
 const _renderPos = new THREE.Vector3();
 const _renderQuat = new THREE.Quaternion();
+const _trailPos = new THREE.Vector3();
 let _hasPhysPrev = false;
 
 function tick(_time, frame) {
@@ -710,6 +736,12 @@ function tick(_time, frame) {
   if (controls.cameraToggle && running && !physics.rolling && !physics.wingStrike) {
     cameraMode = (cameraMode + 1) % 3;
     savePrefs({ cameraMode });
+  }
+  if (controls.tronToggle) {
+    const on = toggleTronMode(tronCtx());
+    savePrefs({ tronMode: on });
+    const tronEl = document.getElementById('pref-tron');
+    if (tronEl) tronEl.checked = on;
   }
 
   // Crash FX or post-roll hold → menu after 3s
@@ -757,6 +789,15 @@ function tick(_time, frame) {
     gliderMesh.quaternion.copy(_renderQuat);
     updateControlSurfaces(gliderMesh, controls, frameDt);
     updateCockpitInstruments(gliderMesh, physics, frameDt);
+    // Light-cycle trail (Tron)
+    if (isTronMode() && physics.alive && !physics.rolling) {
+      _trailPos.copy(_renderPos);
+      _up.set(0, 1, 0).applyQuaternion(_renderQuat);
+      _trailPos.addScaledVector(_up, -0.35);
+      tronTrail.update(_trailPos, true, physics.airspeed);
+    } else {
+      tronTrail.update(_renderPos, false);
+    }
     if (!isXRPresenting()) updateCockpitOverlay(controls, frameDt);
     if (physics.rolling) {
       // Auto gear down on touchdown for wheel contact

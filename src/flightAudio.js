@@ -19,6 +19,11 @@ export class FlightAudio {
     this.ready = false;
     this.enabled = true;
     this._userVolume = 0.7;
+    /** Tron / neon digital SFX profile */
+    this.tronMode = false;
+    this._tronHum = null;
+    this._tronHumGain = null;
+    this._tronLfo = null;
     this._beepTimer = 0;
     this._sinkPulseTimer = 0;
     this._buffetPhase = 0;
@@ -384,7 +389,25 @@ export class FlightAudio {
     this._wasRolling = !!state.rolling;
 
     // Quiet ambient always under flight
-    this._setAmb(0.028 + Math.min(0.04, spd / 800));
+    const ambBase = this.tronMode ? 0.04 : 0.028;
+    this._setAmb(ambBase + Math.min(0.05, spd / 700));
+
+    if (this.tronMode) {
+      this._ensureTronHum();
+      const t0 = this.ctx.currentTime;
+      const spd01t = Math.min(1, Math.max(0, (spd - 6) / 50));
+      if (this._tronHumGain) {
+        this._tronHumGain.gain.setTargetAtTime(0.03 + spd01t * 0.06, t0, 0.1);
+      }
+      if (this._tronHum) {
+        this._tronHum.frequency.setTargetAtTime(48 + spd01t * 90, t0, 0.12);
+      }
+      if (this._tronHum2) {
+        this._tronHum2.frequency.setTargetAtTime(96 + spd01t * 160, t0, 0.12);
+      }
+    } else if (this._tronHumGain) {
+      this._tronHumGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.2);
+    }
 
     if (state.rolling) {
       this._updateRollNoise(dt, spd, brakes, onRunway);
@@ -406,10 +429,12 @@ export class FlightAudio {
       ? 1
       : Math.min(1, Math.max(0, (aoaAbs - 0.18) / 0.12));
 
-    // Base far-air
-    const baseVol = Math.min(0.55, 0.03 + spd01 * 0.38);
-    const baseHz = 260 + spd01 * 900;
-    const baseShelf = -10 + spd01 * 9;
+    // Base far-air (Tron: thinner digital rush)
+    const baseVol = this.tronMode
+      ? Math.min(0.4, 0.04 + spd01 * 0.28)
+      : Math.min(0.55, 0.03 + spd01 * 0.38);
+    const baseHz = this.tronMode ? 900 + spd01 * 2200 : 260 + spd01 * 900;
+    const baseShelf = this.tronMode ? 4 + spd01 * 6 : -10 + spd01 * 9;
     const t = this.ctx.currentTime;
     this._windBaseGain.gain.setTargetAtTime(Math.max(0.0001, baseVol), t, 0.07);
     this._windBaseFilter.frequency.setTargetAtTime(baseHz, t, 0.09);
@@ -464,6 +489,67 @@ export class FlightAudio {
       const target = 0.62 * this._userVolume;
       this._master.gain.setTargetAtTime(target, this.ctx.currentTime, 0.05);
     }
+  }
+
+  /**
+   * Neon digital sound profile (Tron mode).
+   * @param {boolean} on
+   */
+  setTronMode(on) {
+    this.tronMode = !!on;
+    if (!this.ctx || !this.ready) return;
+    const t = this.ctx.currentTime;
+    if (this.tronMode) {
+      this._ensureTronHum();
+      if (this._tronHumGain) {
+        this._tronHumGain.gain.setTargetAtTime(0.045, t, 0.2);
+      }
+      if (this._tronHum) {
+        this._tronHum.frequency.setTargetAtTime(55, t, 0.15);
+      }
+      // Brighter, thinner wind bed
+      if (this._windBaseFilter) {
+        this._windBaseFilter.frequency.setTargetAtTime(1200, t, 0.2);
+      }
+    } else if (this._tronHumGain) {
+      this._tronHumGain.gain.setTargetAtTime(0.0001, t, 0.25);
+    }
+  }
+
+  _ensureTronHum() {
+    if (!this.ctx || this._tronHum) return;
+    const ctx = this.ctx;
+    this._tronHum = ctx.createOscillator();
+    this._tronHum.type = 'sawtooth';
+    this._tronHum.frequency.value = 55;
+    const hum2 = ctx.createOscillator();
+    hum2.type = 'square';
+    hum2.frequency.value = 110;
+    this._tronLfo = ctx.createOscillator();
+    this._tronLfo.type = 'sine';
+    this._tronLfo.frequency.value = 0.35;
+    const lfoG = ctx.createGain();
+    lfoG.gain.value = 8;
+    this._tronLfo.connect(lfoG);
+    lfoG.connect(this._tronHum.frequency);
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = 280;
+    filt.Q.value = 4;
+    this._tronHumGain = ctx.createGain();
+    this._tronHumGain.gain.value = 0.0001;
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.12;
+    this._tronHum.connect(filt);
+    hum2.connect(g2);
+    g2.connect(filt);
+    filt.connect(this._tronHumGain);
+    this._tronHumGain.connect(this._masterHP || ctx.destination);
+    this._tronHum.start();
+    hum2.start();
+    this._tronLfo.start();
+    this._tronHum2 = hum2;
   }
 
   _updateThermalHum(lift) {
@@ -606,11 +692,17 @@ export class FlightAudio {
         : 0.82 - climb01 * 0.68;
       this._beepTimer -= dt;
       if (this._beepTimer <= 0) {
-        this._beepTimer = Math.max(0.12, interval);
-        const freq = upliftMode
-          ? 520 + climb01 * 480
-          : 620 + climb01 * 520;
-        const dur = upliftMode ? 0.075 + climb01 * 0.025 : 0.052 + climb01 * 0.02;
+        this._beepTimer = Math.max(0.12, this.tronMode ? interval * 0.75 : interval);
+        const freq = this.tronMode
+          ? 920 + climb01 * 980
+          : upliftMode
+            ? 520 + climb01 * 480
+            : 620 + climb01 * 520;
+        const dur = this.tronMode
+          ? 0.04 + climb01 * 0.02
+          : upliftMode
+            ? 0.075 + climb01 * 0.025
+            : 0.052 + climb01 * 0.02;
         const peak = 0.26 + climb01 * 0.16;
         this._beep(freq, dur, peak);
       }
@@ -651,13 +743,13 @@ export class FlightAudio {
     const t0 = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    osc.type = 'sine';
+    osc.type = this.tronMode ? 'square' : 'sine';
     osc.frequency.value = freq;
     const osc2 = ctx.createOscillator();
     const g2 = ctx.createGain();
-    osc2.type = 'triangle';
-    osc2.frequency.value = freq;
-    g2.gain.value = 0.18;
+    osc2.type = this.tronMode ? 'square' : 'triangle';
+    osc2.frequency.value = this.tronMode ? freq * 1.5 : freq;
+    g2.gain.value = this.tronMode ? 0.08 : 0.18;
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.exponentialRampToValueAtTime(Math.max(0.001, peakGain), t0 + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);

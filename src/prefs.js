@@ -11,6 +11,7 @@ const KEY = 'glider-sim-prefs-v1';
  * @property {number} [volume] 0..1 master audio
  * @property {'kmh'|'kt'} [units]
  * @property {boolean} [invertPitch]
+ * @property {boolean} [tronMode]
  */
 
 /** @returns {Prefs} */
@@ -51,4 +52,9 @@ export function getUnits() {
 /** @returns {boolean} */
 export function getInvertPitch() {
   return !!loadPrefs().invertPitch;
+}
+
+/** @returns {boolean} */
+export function getTronMode() {
+  return !!loadPrefs().tronMode;
 }
