@@ -246,6 +246,11 @@ function buildCurvedWinglet(sign, mat) {
     xOff += s.h * Math.sin(cantAbs) * 0.9;
     zOff += s.sweep * 0.07;
   }
+  // Tron trail sample point at winglet tip (slightly aft so ribbon trails behind)
+  const trailAnchor = new THREE.Object3D();
+  trailAnchor.name = 'trailAnchor';
+  trailAnchor.position.set(sign * xOff, y + 0.02, zOff + 0.08);
+  root.add(trailAnchor);
   return root;
 }
 

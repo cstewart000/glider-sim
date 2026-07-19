@@ -1,29 +1,26 @@
 /**
- * Tron mode — neon grid aesthetic, dual winglet light ribbons, theme helpers.
+ * Tron mode — neon outlines, dual winglet ribbons (top/bottom edge depth).
  */
 
 import * as THREE from 'three';
 
 const TRON_CYAN = 0x66f0ff;
-const TRON_CYAN_SOFT = 0x99f6ff;
+const TRON_CYAN_SOFT = 0x88f4ff;
 const TRON_CYAN_GLOW = 0xaaeeff;
 const TRON_BODY = 0x060a10;
-const TRON_SURFACE = 0x55eeff; // neon light-blue control surfaces
+const TRON_SURFACE_FILL = 0x0a1218; // dark fill under neon outlines
 const TRON_FOG = 0x02060c;
 const TRON_CLEAR = 0x00040a;
 
 const CLASSIC_FOG = 0xe8eef2;
 const CLASSIC_CLEAR = 0xeef2f5;
 
-// Half-span / dihedral match glider.js (before root scale 1.05 applied in world via mesh)
-const WING_HALF = 9.2;
-const WING_DIHEDRAL = (7 * Math.PI) / 180;
-
 /** @type {boolean} */
 let tronOn = false;
 
 /**
- * One translucent ribbon trail (triangle strip).
+ * Vertical ribbon: top & bottom edges (depth), trails behind sample point.
+ * Cross-section is vertical (up-down), not flat on the wing plane.
  */
 class RibbonTrail {
   /**
@@ -31,15 +28,15 @@ class RibbonTrail {
    * @param {object} [opts]
    */
   constructor(scene, opts = {}) {
-    this.maxPoints = opts.maxPoints ?? 140;
-    this.minDist = opts.minDist ?? 0.5;
-    this.halfWidth = opts.halfWidth ?? 0.12;
+    this.maxPoints = opts.maxPoints ?? 150;
+    this.minDist = opts.minDist ?? 0.45;
+    /** Half-height of ribbon (top/bottom from center line) */
+    this.halfHeight = opts.halfHeight ?? 0.16;
     this.scene = scene;
     this.count = 0;
     this.head = 0;
-    // Ring buffer of sample points
     this.samples = new Float32Array(this.maxPoints * 3);
-    // Ribbon: 2 verts per sample → maxPoints * 2 vertices, (maxPoints-1)*6 indices
+    // Also store path tangent approx for stable orientation
     const maxV = this.maxPoints * 2;
     this.positions = new Float32Array(maxV * 3);
     this.colors = new Float32Array(maxV * 4);
@@ -48,7 +45,7 @@ class RibbonTrail {
     this.geo.setAttribute('color', new THREE.BufferAttribute(this.colors, 4));
     this.geo.setDrawRange(0, 0);
 
-    // Translucent additive “glass neon” — reads as glowing / reflective light
+    // Translucent neon blue glass (additive)
     this.mat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       vertexColors: true,
@@ -66,13 +63,47 @@ class RibbonTrail {
     this.mesh.visible = false;
     scene.add(this.mesh);
 
+    // Explicit top + bottom edge lines (reads as ribbon with depth)
+    this.edgeGeoTop = new THREE.BufferGeometry();
+    this.edgeGeoBot = new THREE.BufferGeometry();
+    this.edgePosTop = new Float32Array(this.maxPoints * 3);
+    this.edgePosBot = new Float32Array(this.maxPoints * 3);
+    this.edgeGeoTop.setAttribute(
+      'position',
+      new THREE.BufferAttribute(this.edgePosTop, 3)
+    );
+    this.edgeGeoBot.setAttribute(
+      'position',
+      new THREE.BufferAttribute(this.edgePosBot, 3)
+    );
+    this.edgeMat = new THREE.LineBasicMaterial({
+      color: TRON_CYAN_GLOW,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+    });
+    this.edgeTop = new THREE.Line(this.edgeGeoTop, this.edgeMat);
+    this.edgeBot = new THREE.Line(this.edgeGeoBot, this.edgeMat.clone());
+    this.edgeBot.material.opacity = 0.65;
+    this.edgeTop.frustumCulled = false;
+    this.edgeBot.frustumCulled = false;
+    this.edgeTop.renderOrder = 9;
+    this.edgeBot.renderOrder = 9;
+    this.edgeTop.visible = false;
+    this.edgeBot.visible = false;
+    scene.add(this.edgeTop);
+    scene.add(this.edgeBot);
+
     this._last = new THREE.Vector3(1e9, 1e9, 1e9);
-    this._side = new THREE.Vector3();
-    this._fwd = new THREE.Vector3();
+    this._up = new THREE.Vector3(0, 1, 0);
   }
 
   setActive(on) {
     this.mesh.visible = !!on;
+    this.edgeTop.visible = !!on;
+    this.edgeBot.visible = !!on;
     if (!on) this.clear();
   }
 
@@ -80,84 +111,92 @@ class RibbonTrail {
     this.count = 0;
     this.head = 0;
     this.geo.setDrawRange(0, 0);
+    this.edgeGeoTop.setDrawRange(0, 0);
+    this.edgeGeoBot.setDrawRange(0, 0);
     this._last.set(1e9, 1e9, 1e9);
   }
 
   /**
-   * @param {THREE.Vector3} pos
-   * @param {THREE.Vector3} sideDir unit vector across ribbon width
+   * @param {THREE.Vector3} pos sample at winglet tip
+   * @param {THREE.Vector3} upDir world up for ribbon depth (top/bottom)
    * @param {boolean} active
    * @param {number} speed
    */
-  update(pos, sideDir, active, speed = 20) {
+  update(pos, upDir, active, speed = 20) {
     if (!active) {
       this.setActive(false);
       return;
     }
     this.mesh.visible = true;
+    this.edgeTop.visible = true;
+    this.edgeBot.visible = true;
 
-    const minD = Math.max(0.3, this.minDist * (16 / Math.max(8, speed)));
-    if (this._last.distanceToSquared(pos) < minD * minD && this.count > 3) {
-      // Still rebuild ribbon orientation as glider banks
-      this._rebuild(sideDir);
-      return;
+    const minD = Math.max(0.28, this.minDist * (15 / Math.max(8, speed)));
+    if (this._last.distanceToSquared(pos) >= minD * minD || this.count < 3) {
+      this._last.copy(pos);
+      const i = this.head % this.maxPoints;
+      this.samples[i * 3] = pos.x;
+      this.samples[i * 3 + 1] = pos.y;
+      this.samples[i * 3 + 2] = pos.z;
+      this.head++;
+      this.count = Math.min(this.count + 1, this.maxPoints);
     }
-    this._last.copy(pos);
-
-    const i = this.head % this.maxPoints;
-    this.samples[i * 3] = pos.x;
-    this.samples[i * 3 + 1] = pos.y;
-    this.samples[i * 3 + 2] = pos.z;
-    this.head++;
-    this.count = Math.min(this.count + 1, this.maxPoints);
-    this._rebuild(sideDir);
+    this._rebuild(upDir);
   }
 
-  _rebuild(sideDir) {
+  _rebuild(upDir) {
     if (this.count < 2) {
       this.geo.setDrawRange(0, 0);
+      this.edgeGeoTop.setDrawRange(0, 0);
+      this.edgeGeoBot.setDrawRange(0, 0);
       return;
     }
     const n = this.count;
     const start = this.head - n;
-    const hw = this.halfWidth;
-    const side = this._side.copy(sideDir);
-    if (side.lengthSq() < 1e-8) side.set(1, 0, 0);
-    else side.normalize();
+    const hh = this.halfHeight;
+    const up = this._up.copy(upDir);
+    if (up.lengthSq() < 1e-8) up.set(0, 1, 0);
+    else up.normalize();
 
     let vi = 0;
     for (let k = 0; k < n; k++) {
-      const src = (start + k + this.maxPoints * 4) % this.maxPoints;
+      const src = (start + k + this.maxPoints * 8) % this.maxPoints;
       const x = this.samples[src * 3];
       const y = this.samples[src * 3 + 1];
       const z = this.samples[src * 3 + 2];
-      // Fade: newest bright, oldest transparent
-      const age = 1 - k / (n - 1);
-      const a = Math.pow(age, 1.15) * 0.55; // translucent light blue
-      const r = 0.55 + age * 0.35;
-      const g = 0.9 + age * 0.08;
+      // Newest = brightest; oldest fades out
+      const age = k / Math.max(1, n - 1); // 0 old → 1 new
+      const a = Math.pow(age, 0.85) * 0.42; // translucent neon blue fill
+      const r = 0.4 + age * 0.35;
+      const g = 0.85 + age * 0.12;
       const b = 1.0;
 
-      // Two edges of ribbon
-      this.positions[vi * 3] = x + side.x * hw;
-      this.positions[vi * 3 + 1] = y + side.y * hw;
-      this.positions[vi * 3 + 2] = z + side.z * hw;
+      // Top edge
+      this.positions[vi * 3] = x + up.x * hh;
+      this.positions[vi * 3 + 1] = y + up.y * hh;
+      this.positions[vi * 3 + 2] = z + up.z * hh;
       this.colors[vi * 4] = r;
       this.colors[vi * 4 + 1] = g;
       this.colors[vi * 4 + 2] = b;
       this.colors[vi * 4 + 3] = a;
+      this.edgePosTop[k * 3] = this.positions[vi * 3];
+      this.edgePosTop[k * 3 + 1] = this.positions[vi * 3 + 1];
+      this.edgePosTop[k * 3 + 2] = this.positions[vi * 3 + 2];
       vi++;
-      this.positions[vi * 3] = x - side.x * hw;
-      this.positions[vi * 3 + 1] = y - side.y * hw;
-      this.positions[vi * 3 + 2] = z - side.z * hw;
-      this.colors[vi * 4] = r;
-      this.colors[vi * 4 + 1] = g;
+      // Bottom edge
+      this.positions[vi * 3] = x - up.x * hh;
+      this.positions[vi * 3 + 1] = y - up.y * hh;
+      this.positions[vi * 3 + 2] = z - up.z * hh;
+      this.colors[vi * 4] = r * 0.9;
+      this.colors[vi * 4 + 1] = g * 0.95;
       this.colors[vi * 4 + 2] = b;
-      this.colors[vi * 4 + 3] = a * 0.85;
+      this.colors[vi * 4 + 3] = a * 0.9;
+      this.edgePosBot[k * 3] = this.positions[vi * 3];
+      this.edgePosBot[k * 3 + 1] = this.positions[vi * 3 + 1];
+      this.edgePosBot[k * 3 + 2] = this.positions[vi * 3 + 2];
       vi++;
     }
 
-    // Indices for triangle strip as triangles
     const idx = [];
     for (let k = 0; k < n - 1; k++) {
       const a = k * 2;
@@ -171,17 +210,28 @@ class RibbonTrail {
     this.geo.attributes.color.needsUpdate = true;
     this.geo.setDrawRange(0, idx.length);
     this.geo.computeBoundingSphere();
+
+    this.edgeGeoTop.attributes.position.needsUpdate = true;
+    this.edgeGeoBot.attributes.position.needsUpdate = true;
+    this.edgeGeoTop.setDrawRange(0, n);
+    this.edgeGeoBot.setDrawRange(0, n);
   }
 
   dispose() {
     this.scene.remove(this.mesh);
+    this.scene.remove(this.edgeTop);
+    this.scene.remove(this.edgeBot);
     this.geo.dispose();
+    this.edgeGeoTop.dispose();
+    this.edgeGeoBot.dispose();
     this.mat.dispose();
+    this.edgeMat.dispose();
+    this.edgeBot.material.dispose();
   }
 }
 
 /**
- * Dual winglet light ribbons (left + right).
+ * Dual winglet trails — samples real trailAnchor nodes on the glider.
  */
 export class LightTrail {
   /**
@@ -189,176 +239,95 @@ export class LightTrail {
    */
   constructor(scene) {
     this.scene = scene;
-    this.left = new RibbonTrail(scene, { halfWidth: 0.14, maxPoints: 160 });
-    this.right = new RibbonTrail(scene, { halfWidth: 0.14, maxPoints: 160 });
-    // Soft core lines on top of ribbons for “hot” neon edge
-    this._leftCore = this._makeCoreLine(scene);
-    this._rightCore = this._makeCoreLine(scene);
-    this._coreL = new Float32Array(160 * 3);
-    this._coreR = new Float32Array(160 * 3);
-    this._coreCount = 0;
-    this._coreHead = 0;
-    this._last = new THREE.Vector3(1e9, 1e9, 1e9);
-
-    this._right = new THREE.Vector3();
+    this.left = new RibbonTrail(scene, { halfHeight: 0.18, maxPoints: 160 });
+    this.right = new RibbonTrail(scene, { halfHeight: 0.18, maxPoints: 160 });
     this._up = new THREE.Vector3();
-    this._fwd = new THREE.Vector3();
     this._leftTip = new THREE.Vector3();
     this._rightTip = new THREE.Vector3();
-    this._sideL = new THREE.Vector3();
-    this._sideR = new THREE.Vector3();
-  }
-
-  _makeCoreLine(scene) {
-    const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(160 * 3);
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setDrawRange(0, 0);
-    const mat = new THREE.LineBasicMaterial({
-      color: TRON_CYAN_GLOW,
-      transparent: true,
-      opacity: 0.75,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      fog: false,
-    });
-    const line = new THREE.Line(geo, mat);
-    line.frustumCulled = false;
-    line.renderOrder = 9;
-    line.visible = false;
-    scene.add(line);
-    line.userData.buf = pos;
-    return line;
+    this._anchors = null; // [left, right] Object3D
   }
 
   setActive(on) {
     this.left.setActive(on);
     this.right.setActive(on);
-    this._leftCore.visible = !!on;
-    this._rightCore.visible = !!on;
     if (!on) this.clear();
   }
 
   clear() {
     this.left.clear();
     this.right.clear();
-    this._coreCount = 0;
-    this._coreHead = 0;
-    this._leftCore.geometry.setDrawRange(0, 0);
-    this._rightCore.geometry.setDrawRange(0, 0);
-    this._last.set(1e9, 1e9, 1e9);
   }
 
   /**
-   * Sample winglet world positions from glider pose.
    * @param {THREE.Object3D} glider
-   * @param {THREE.Vector3} pos render position
+   * @param {THREE.Vector3} pos unused (anchors are world-space)
    * @param {THREE.Quaternion} quat
    * @param {boolean} active
    * @param {number} speed
    */
   updateFromGlider(glider, pos, quat, active, speed = 20) {
-    if (!active) {
+    if (!active || !glider) {
       this.setActive(false);
       return;
     }
 
-    const scale = glider?.scale?.x ?? 1.05;
-    const half = WING_HALF * scale;
-    const d = WING_DIHEDRAL;
+    // Cache winglet trail anchors once (from glider.js trailAnchor nodes)
+    if (!this._anchors || this._anchors[0]?.parent == null) {
+      const found = [];
+      glider.traverse((o) => {
+        if (o.name === 'trailAnchor') found.push(o);
+      });
+      if (found.length >= 2) {
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+        const wa = new THREE.Vector3();
+        const wb = new THREE.Vector3();
+        found[0].getWorldPosition(wa);
+        found[1].getWorldPosition(wb);
+        const da = wa.clone().sub(pos).dot(right);
+        const db = wb.clone().sub(pos).dot(right);
+        this._anchors = da < db ? [found[0], found[1]] : [found[1], found[0]];
+      } else {
+        this._anchors = null;
+      }
+    }
 
-    this._right.set(1, 0, 0).applyQuaternion(quat);
     this._up.set(0, 1, 0).applyQuaternion(quat);
-    this._fwd.set(0, 0, -1).applyQuaternion(quat);
 
-    // Winglet tip ≈ tip of main wing + slight up (matches buildCurvedWinglet)
-    // Local before dihedral: (±half, tipY, tipZ); rotate about Z by ±dihedral
-    const tipY = 0.55;
-    const tipZ = 0.12; // slightly aft of LE
-    for (const sign of [-1, 1]) {
-      const x0 = sign * half;
-      const y0 = tipY;
-      const c = Math.cos(sign * d);
-      const s = Math.sin(sign * d);
-      const lx = x0 * c - y0 * s;
-      const ly = x0 * s + y0 * c;
-      const out = sign < 0 ? this._leftTip : this._rightTip;
-      out
+    if (this._anchors && this._anchors.length >= 2) {
+      this._anchors[0].getWorldPosition(this._leftTip);
+      this._anchors[1].getWorldPosition(this._rightTip);
+    } else {
+      // Fallback approximate tips (aft of wing)
+      const half = 9.2 * (glider.scale?.x ?? 1.05);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+      const up = this._up;
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+      this._leftTip
         .copy(pos)
-        .addScaledVector(this._right, lx)
-        .addScaledVector(this._up, ly)
-        .addScaledVector(this._fwd, -tipZ);
+        .addScaledVector(right, -half)
+        .addScaledVector(up, 0.9)
+        .addScaledVector(fwd, 0.35); // slightly aft of tip
+      this._rightTip
+        .copy(pos)
+        .addScaledVector(right, half)
+        .addScaledVector(up, 0.9)
+        .addScaledVector(fwd, 0.35);
     }
 
-    // Ribbon width across the wing chord-ish (up × along-trail)
-    this._sideL.copy(this._up);
-    this._sideR.copy(this._up);
-
-    this.left.update(this._leftTip, this._sideL, true, speed);
-    this.right.update(this._rightTip, this._sideR, true, speed);
-
-    // Hot neon cores
-    this._pushCore(this._leftTip, this._rightTip, speed);
+    this.left.update(this._leftTip, this._up, true, speed);
+    this.right.update(this._rightTip, this._up, true, speed);
   }
 
-  _pushCore(left, right, speed) {
-    const minD = Math.max(0.3, 0.45 * (16 / Math.max(8, speed)));
-    const mid = this._last;
-    // Use left tip for spacing
-    if (mid.distanceToSquared(left) < minD * minD && this._coreCount > 2) {
-      return;
-    }
-    mid.copy(left);
-
-    const i = this._coreHead % 160;
-    this._coreL[i * 3] = left.x;
-    this._coreL[i * 3 + 1] = left.y;
-    this._coreL[i * 3 + 2] = left.z;
-    this._coreR[i * 3] = right.x;
-    this._coreR[i * 3 + 1] = right.y;
-    this._coreR[i * 3 + 2] = right.z;
-    this._coreHead++;
-    this._coreCount = Math.min(this._coreCount + 1, 160);
-    this._flushCore(this._leftCore, this._coreL);
-    this._flushCore(this._rightCore, this._coreR);
-  }
-
-  _flushCore(line, ring) {
-    const n = this._coreCount;
-    const ordered = line.userData.buf;
-    const start = this._coreHead - n;
-    for (let k = 0; k < n; k++) {
-      const src = (start + k + 160 * 4) % 160;
-      ordered[k * 3] = ring[src * 3];
-      ordered[k * 3 + 1] = ring[src * 3 + 1];
-      ordered[k * 3 + 2] = ring[src * 3 + 2];
-    }
-    line.geometry.attributes.position.needsUpdate = true;
-    line.geometry.setDrawRange(0, n);
-    line.visible = n > 1;
-  }
-
-  /** @deprecated use updateFromGlider */
-  update(pos, active, speed = 20) {
-    if (!active) this.setActive(false);
+  update() {
+    /* legacy no-op */
   }
 
   dispose() {
     this.left.dispose();
     this.right.dispose();
-    this.scene.remove(this._leftCore);
-    this.scene.remove(this._rightCore);
-    this._leftCore.geometry.dispose();
-    this._rightCore.geometry.dispose();
-    this._leftCore.material.dispose();
-    this._rightCore.material.dispose();
   }
 }
 
-/**
- * Snapshot material colors once so we can restore classic look.
- * @param {THREE.Object3D} root
- */
 function snapshotMaterials(root) {
   root.traverse((o) => {
     if (!o.isMesh && !o.isLineSegments && !o.isLine && !o.isPoints) return;
@@ -375,10 +344,7 @@ function snapshotMaterials(root) {
 }
 
 /**
- * Recolor glider for Tron / classic.
- * Control surfaces → neon light blue (translucent).
- * @param {THREE.Object3D} glider
- * @param {boolean} on
+ * Control surfaces: dark fill + neon outlines only.
  */
 export function applyTronGlider(glider, on) {
   if (!glider) return;
@@ -402,26 +368,26 @@ export function applyTronGlider(glider, on) {
           parentName.includes('elevator') ||
           parentName.includes('rudder') ||
           parentName.includes('brake') ||
-          m.userData?.isAccent ||
-          // Translucent red control surfaces from createGlider
           (m.transparent &&
             snap.color &&
             snap.color.r > 0.7 &&
             snap.color.g < 0.75 &&
             snap.color.b < 0.75);
+
         if (isLine) {
+          // Neon outline — including control-surface edges
           m.color.setHex(TRON_CYAN);
           m.transparent = true;
-          m.opacity = 0.95;
+          m.opacity = 0.98;
         } else if (isControl) {
-          // Neon light-blue translucent surfaces
-          m.color.setHex(TRON_SURFACE);
+          // Fill: nearly black (outlines carry the neon)
+          m.color.setHex(TRON_SURFACE_FILL);
           m.transparent = true;
-          m.opacity = 0.72;
-          m.depthWrite = false;
+          m.opacity = 0.35;
+          m.depthWrite = true;
         } else if (m.transparent && (snap.opacity ?? 1) < 0.55) {
           m.color.setHex(TRON_CYAN_SOFT);
-          m.opacity = 0.3;
+          m.opacity = 0.25;
         } else {
           m.color.setHex(TRON_BODY);
           m.opacity = 1;
@@ -438,11 +404,6 @@ export function applyTronGlider(glider, on) {
   });
 }
 
-/**
- * Scene fog / clear / sky tint for Tron.
- * @param {{ scene: THREE.Scene, renderer: THREE.WebGLRenderer, sunGroup?: THREE.Object3D }} ctx
- * @param {boolean} on
- */
 export function applyTronScene(ctx, on) {
   const { scene, renderer, sunGroup } = ctx;
   if (scene.fog) {
@@ -489,12 +450,10 @@ export function isTronMode() {
   return tronOn;
 }
 
-/**
- * @param {boolean} on
- * @param {object} ctx
- */
 export function setTronMode(on, ctx) {
   tronOn = !!on;
+  // Force re-find trail anchors when toggling
+  if (ctx.trail) ctx.trail._anchors = null;
   applyTronGlider(ctx.glider, tronOn);
   applyTronScene(ctx, tronOn);
   if (ctx.trail) ctx.trail.setActive(tronOn);
@@ -507,4 +466,4 @@ export function toggleTronMode(ctx) {
   return setTronMode(!tronOn, ctx);
 }
 
-export { TRON_CYAN, TRON_BODY, TRON_SURFACE as TRON_ACCENT, TRON_SURFACE };
+export { TRON_CYAN, TRON_BODY, TRON_SURFACE_FILL as TRON_ACCENT };
